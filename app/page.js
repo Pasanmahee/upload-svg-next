@@ -5,9 +5,13 @@ export default function Home() {
   const [svgFile, setSvgFile] = useState(null);
   const [colors, setColors] = useState('');
   const [responseMessage, setResponseMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false); // State for loading indicator
+  const [fileName, setFileName] = useState(''); // State to store the SVG file name
 
   const handleFileChange = (e) => {
-    setSvgFile(e.target.files[0]);
+    const file = e.target.files[0];
+    setSvgFile(file);
+    setFileName(file.name); // Set the file name to display
   };
 
   const handleSubmit = async (e) => {
@@ -17,6 +21,8 @@ export default function Home() {
       setResponseMessage('Please select an SVG file to upload.');
       return;
     }
+
+    setIsLoading(true); // Show loader while data is being submitted
 
     const colorArray = colors.split(',').map((color) => color.trim());
 
@@ -34,28 +40,105 @@ export default function Home() {
       setResponseMessage(result.message);
     } catch (err) {
       setResponseMessage('Error: ' + err.message);
+    } finally {
+      setIsLoading(false); // Hide loader after submission
     }
   };
 
   return (
-    <div>
-      <h1>Upload SVG Data</h1>
-      <form onSubmit={handleSubmit}>
-        <div>
-          <label>SVG File:</label>
-          <input type="file" accept=".svg" onChange={handleFileChange} />
+    <div style={styles.container}>
+      <h1 style={styles.heading}>Upload SVG Data</h1>
+      <form onSubmit={handleSubmit} style={styles.form}>
+        <div style={styles.formGroup}>
+          <label style={styles.label}>SVG File:</label>
+          <input 
+            type="file" 
+            accept=".svg" 
+            onChange={handleFileChange} 
+            style={styles.input}
+          />
+          {fileName && <p style={styles.fileName}>File: {fileName}</p>} {/* Display file name */}
         </div>
-        <div>
-          <label>Colors (comma-separated):</label>
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Colors (comma-separated):</label>
           <input
             type="text"
             value={colors}
             onChange={(e) => setColors(e.target.value)}
+            placeholder="e.g., #000000, #FFFFFF"
+            style={styles.input}
           />
         </div>
-        <button type="submit">Submit</button>
+        <button type="submit" style={styles.button} disabled={isLoading}>
+          {isLoading ? 'Uploading...' : 'Submit'}
+        </button>
       </form>
-      {responseMessage && <p>{responseMessage}</p>}
+      {isLoading && <div style={styles.loader}>Loading...</div>} {/* Loader */}
+      {responseMessage && <p style={styles.responseMessage}>{responseMessage}</p>}
     </div>
   );
 }
+
+const styles = {
+  container: {
+    maxWidth: '600px',
+    margin: '0 auto',
+    padding: '20px',
+    backgroundColor: '#f9f9f9',
+    borderRadius: '8px',
+    boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
+  },
+  heading: {
+    textAlign: 'center',
+    color: '#333',
+    marginBottom: '20px',
+  },
+  form: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '15px',
+  },
+  formGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  label: {
+    marginBottom: '5px',
+    fontSize: '16px',
+    color: '#333',
+  },
+  input: {
+    padding: '10px',
+    fontSize: '16px',
+    borderRadius: '4px',
+    border: '1px solid #ddd',
+  },
+  fileName: {
+    marginTop: '5px',
+    fontSize: '14px',
+    color: '#555',
+  },
+  button: {
+    padding: '12px',
+    fontSize: '16px',
+    color: '#fff',
+    backgroundColor: '#0070f3',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    transition: 'background-color 0.3s ease',
+    textAlign: 'center',
+  },
+  loader: {
+    marginTop: '20px',
+    fontSize: '16px',
+    textAlign: 'center',
+    color: '#0070f3',
+  },
+  responseMessage: {
+    marginTop: '20px',
+    fontSize: '16px',
+    color: '#0070f3',
+    textAlign: 'center',
+  },
+};
