@@ -6,13 +6,28 @@ import { join } from 'path';
 const uri = "mongodb+srv://pasanmahee:fVgPys0uknMCuT8S@cluster0.zwasfmo.mongodb.net/svgfacetpaintbynumber?retryWrites=true&w=majority";
 const client = new MongoClient(uri);
 
+function setCORSHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+}
+
 export async function POST(req) {
+  const headers = setCORSHeaders();
+  
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return NextResponse.json({}, { status: 200, headers });
+  }
+
   const formData = await req.formData();
   const file = formData.get('file');
   const colors = JSON.parse(formData.get('colors'));
 
   if (!file || !colors) {
-    return NextResponse.json({ message: 'File or colors missing' }, { status: 400 });
+    return NextResponse.json({ message: 'File or colors missing' }, { status: 400, headers });
   }
 
   const filePath = join(process.cwd(), 'uploads', file.name);
@@ -33,7 +48,7 @@ export async function POST(req) {
     const collection = database.collection('svgdata');
 
     const result = await collection.insertOne({ svgData, colors });
-    return NextResponse.json({ message: 'Data inserted successfully', result });
+    return NextResponse.json({ message: 'Data inserted successfully', result }, { headers });
   } finally {
     await client.close();
 
@@ -43,26 +58,33 @@ export async function POST(req) {
 }
 
 export async function GET(req) {
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
-  
-    if (!id) {
-      return NextResponse.json({ message: 'ID is required' }, { status: 400 });
-    }
-  
-    try {
-      await client.connect();
-      const database = client.db('svgfacetpaintbynumber');
-      const collection = database.collection('svgdata');
-  
-      const data = await collection.findOne({ _id: new ObjectId(id) });
-  
-      if (!data) {
-        return NextResponse.json({ message: 'Document not found' }, { status: 404 });
-      }
-  
-      return NextResponse.json(data);
-    } finally {
-      await client.close();
-    }
+  const headers = setCORSHeaders();
+
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return NextResponse.json({}, { status: 200, headers });
   }
+
+  const { searchParams } = new URL(req.url);
+  const id = searchParams.get('id');
+
+  if (!id) {
+    return NextResponse.json({ message: 'ID is required' }, { status: 400, headers });
+  }
+
+  try {
+    await client.connect();
+    const database = client.db('svgfacetpaintbynumber');
+    const collection = database.collection('svgdata');
+
+    const data = await collection.findOne({ _id: new ObjectId(id) });
+
+    if (!data) {
+      return NextResponse.json({ message: 'Document not found' }, { status: 404, headers });
+    }
+
+    return NextResponse.json(data, { headers });
+  } finally {
+    await client.close();
+  }
+}
