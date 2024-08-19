@@ -38,6 +38,14 @@ export default function Home() {
 
       const result = await res.json();
       setResponseMessage(result.message);
+
+      // Clear the fields if the data was inserted successfully
+      if (res.ok) {
+        setSvgFile(null);
+        setColors('');
+        setFileName(''); // Clear the displayed file name
+        e.target.reset(); // Reset the form fields
+      }
     } catch (err) {
       setResponseMessage('Error: ' + err.message);
     } finally {
@@ -73,8 +81,7 @@ export default function Home() {
           {isLoading ? 'Uploading...' : 'Submit'}
         </button>
       </form>
-      {isLoading && <div style={styles.loader}>Loading...</div>} {/* Loader */}
-      {responseMessage && <p style={styles.responseMessage}>{responseMessage}</p>}
+      {isLoading ? <div style={styles.loader}>Loading...</div> : <p style={styles.responseMessage}>{responseMessage}</p>} {/* Loader */}
     </div>
   );
 }
