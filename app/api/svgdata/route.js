@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { MongoClient, ObjectId } from 'mongodb';
 import { promises as fs } from 'fs';
 import { join } from 'path';
+import sharp from 'sharp';
 
 const uri = process.env.MONGODB_URI;
 const client = new MongoClient(uri);
@@ -43,11 +44,19 @@ export async function POST(req) {
   const svgData = buffer.toString('utf8'); // Convert the buffer to a string
 
   try {
+    // Convert SVG to PNG using sharp
+    const pngBuffer = await sharp(buffer)
+      .png()
+      .toBuffer();
+
+    // Convert the PNG buffer to a base64 string
+    const pngData = pngBuffer.toString('base64');
+
     await client.connect();
     const database = client.db('svgfacetpaintbynumber');
     const collection = database.collection('svgdata');
 
-    const result = await collection.insertOne({ svgData, colors });
+    const result = await collection.insertOne({ svgData, colors, pngData });
     return NextResponse.json({ message: 'Data inserted successfully', result }, { headers });
   } finally {
     await client.close();
