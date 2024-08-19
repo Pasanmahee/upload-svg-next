@@ -17,7 +17,7 @@ function setCORSHeaders() {
 
 export async function POST(req) {
   const headers = setCORSHeaders();
-  
+
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return NextResponse.json({}, { status: 200, headers });
@@ -38,14 +38,21 @@ export async function POST(req) {
   // Ensure the uploads directory exists
   await fs.mkdir(join(process.cwd(), 'uploads'), { recursive: true });
 
-  // Save the uploaded SVG file to the server
-  await fs.writeFile(filePath, buffer);
+  // Convert buffer to a string to modify the SVG content
+  let svgData = buffer.toString('utf8');
 
-  const svgData = buffer.toString('utf8'); // Convert the buffer to a string
+  // Modify the SVG content: replace all fill colors with white
+  svgData = svgData.replace(/fill\s*=\s*['"][^'"]*['"]/gi, 'fill="#FFFFFF"');
+
+  // Save the modified SVG back to a buffer for further processing
+  const modifiedBuffer = Buffer.from(svgData, 'utf8');
+
+  // Save the modified SVG file to the server
+  await fs.writeFile(filePath, modifiedBuffer);
 
   try {
-    // Convert SVG to PNG using sharp
-    const pngBuffer = await sharp(buffer)
+    // Convert modified SVG to PNG using sharp
+    const pngBuffer = await sharp(modifiedBuffer)
       .png()
       .toBuffer();
 
