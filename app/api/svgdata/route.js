@@ -3,7 +3,7 @@ import { MongoClient, ObjectId } from 'mongodb';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 
-const uri = "mongodb+srv://pasanmahee:fVgPys0uknMCuT8S@cluster0.zwasfmo.mongodb.net/svgfacetpaintbynumber?retryWrites=true&w=majority";
+const uri = process.env.MONGODB_URI;
 const client = new MongoClient(uri);
 
 function setCORSHeaders() {
