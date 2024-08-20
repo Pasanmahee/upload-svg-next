@@ -38,14 +38,14 @@ export async function POST(req) {
   // Ensure the uploads directory exists
   await fs.mkdir(join(process.cwd(), 'uploads'), { recursive: true });
 
-  // Convert buffer to a string to modify the SVG content
-  let svgData = buffer.toString('utf8');
+  // Convert buffer to a string to get the original SVG content
+  const originalSvgData = buffer.toString('utf8');
 
   // Modify the SVG content: replace all fill colors with white
-  svgData = svgData.replace(/fill\s*=\s*['"][^'"]*['"]/gi, 'fill="#FFFFFF"');
+  let modifiedSvgData = originalSvgData.replace(/fill\s*=\s*['"][^'"]*['"]/gi, 'fill="#FFFFFF"');
 
   // Save the modified SVG back to a buffer for further processing
-  const modifiedBuffer = Buffer.from(svgData, 'utf8');
+  const modifiedBuffer = Buffer.from(modifiedSvgData, 'utf8');
 
   // Save the modified SVG file to the server
   await fs.writeFile(filePath, modifiedBuffer);
@@ -63,7 +63,8 @@ export async function POST(req) {
     const database = client.db('svgfacetpaintbynumber');
     const collection = database.collection('svgdata');
 
-    const result = await collection.insertOne({ svgData, colors, pngData });
+    // Insert original SVG data and modified PNG data
+    const result = await collection.insertOne({ svgData: originalSvgData, colors, pngData });
     return NextResponse.json({ message: 'Data inserted successfully', result }, { headers });
   } finally {
     await client.close();
