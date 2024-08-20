@@ -41,8 +41,9 @@ export async function POST(req) {
   // Convert buffer to a string to get the original SVG content
   const originalSvgData = buffer.toString('utf8');
 
-  // Modify the SVG content: replace all fill colors with white
+  // Modify the SVG content: replace all fill colors with white (#FFFFFF)
   let modifiedSvgData = originalSvgData.replace(/fill\s*=\s*['"][^'"]*['"]/gi, 'fill="#FFFFFF"');
+  modifiedSvgData = modifiedSvgData.replace(/fill\s*:\s*rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\);/gi, 'fill:#FFFFFF;');
 
   // Save the modified SVG back to a buffer for further processing
   const modifiedBuffer = Buffer.from(modifiedSvgData, 'utf8');
