@@ -21,15 +21,34 @@ export async function GET(req) {
     return NextResponse.json({}, { status: 200, headers });
   }
 
+  const { searchParams } = new URL(req.url);
+  const page = parseInt(searchParams.get('page') || '1');
+  const limit = parseInt(searchParams.get('limit') || '10');
+  const skip = (page - 1) * limit;
+
   try {
     await client.connect();
     const database = client.db('svgfacetpaintbynumber');
     const collection = database.collection('svgdata');
 
-    // Query to retrieve only the _id and pngData fields
-    const data = await collection.find({}, { projection: { _id: 1, pngData: 1 } }).toArray();
+    // Query to retrieve only the _id and pngData fields with pagination
+    const data = await collection.find({}, { projection: { _id: 1, pngData: 1 } })
+                                  .skip(skip)
+                                  .limit(limit)
+                                  .toArray();
 
-    return NextResponse.json(data, { headers });
+    // Retrieve the total count of documents for pagination metadata
+    const total = await collection.countDocuments();
+    const totalPages = Math.ceil(total / limit);
+
+    const response = {
+      data,
+      page,
+      totalPages,
+      total,
+    };
+
+    return NextResponse.json(response, { headers });
   } finally {
     await client.close();
   }
