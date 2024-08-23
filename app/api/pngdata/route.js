@@ -32,7 +32,7 @@ export async function GET(req) {
     const collection = database.collection('svgdata');
 
     // Query to retrieve only the _id and pngData fields with pagination
-    const data = await collection.find({}, { projection: { _id: 1, pngData: 1 } })
+    const data = await collection.find({}, { projection: { _id: 1, pngData: 1, isNew: 1 } })
                                   .skip(skip)
                                   .limit(limit)
                                   .toArray();
