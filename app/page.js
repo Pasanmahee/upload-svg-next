@@ -1,17 +1,43 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function Home() {
   const [svgFile, setSvgFile] = useState(null);
   const [colors, setColors] = useState('');
   const [responseMessage, setResponseMessage] = useState('');
-  const [isLoading, setIsLoading] = useState(false); // State for loading indicator
-  const [fileName, setFileName] = useState(''); // State to store the SVG file name
+  const [isLoading, setIsLoading] = useState(false);
+  const [fileName, setFileName] = useState('');
+  const [categories, setCategories] = useState([]); // State for all categories
+  const [selectedCategories, setSelectedCategories] = useState([]); // State for selected categories
+  const [newCategory, setNewCategory] = useState(''); // State for new category input
+
+  useEffect(() => {
+    // Fetch existing categories from the database when component mounts
+    const fetchCategories = async () => {
+      try {
+        const res = await fetch('/api/categories');
+        const data = await res.json();
+        setCategories(data.categories);
+      } catch (err) {
+        setResponseMessage('Error fetching categories: ' + err.message);
+      }
+    };
+    
+    fetchCategories();
+  }, []);
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     setSvgFile(file);
-    setFileName(file.name); // Set the file name to display
+    setFileName(file.name);
+  };
+
+  const handleCategoryChange = (e) => {
+    const value = Array.from(
+      e.target.selectedOptions,
+      (option) => option.value
+    );
+    setSelectedCategories(value);
   };
 
   const handleSubmit = async (e) => {
@@ -22,13 +48,15 @@ export default function Home() {
       return;
     }
 
-    setIsLoading(true); // Show loader while data is being submitted
+    setIsLoading(true);
 
     const colorArray = colors.split(',').map((color) => color.trim());
 
     const formData = new FormData();
     formData.append('file', svgFile);
     formData.append('colors', JSON.stringify(colorArray));
+    formData.append('categories', JSON.stringify(selectedCategories));
+    formData.append('newCategory', newCategory.trim()); // Include new category in the form data
 
     try {
       const res = await fetch('/api/svgdata', {
@@ -39,17 +67,19 @@ export default function Home() {
       const result = await res.json();
       setResponseMessage(result.message);
 
-      // Clear the fields if the data was inserted successfully
       if (res.ok) {
         setSvgFile(null);
         setColors('');
-        setFileName(''); // Clear the displayed file name
-        e.target.reset(); // Reset the form fields
+        setFileName('');
+        setSelectedCategories([]);
+        setNewCategory(''); // Clear the new category input
+        fetchCategories();
+        e.target.reset();
       }
     } catch (err) {
       setResponseMessage('Error: ' + err.message);
     } finally {
-      setIsLoading(false); // Hide loader after submission
+      setIsLoading(false);
     }
   };
 
@@ -65,7 +95,7 @@ export default function Home() {
             onChange={handleFileChange} 
             style={styles.input}
           />
-          {fileName && <p style={styles.fileName}>File: {fileName}</p>} {/* Display file name */}
+          {fileName && <p style={styles.fileName}>File: {fileName}</p>}
         </div>
         <div style={styles.formGroup}>
           <label style={styles.label}>Colors (comma-separated):</label>
@@ -77,11 +107,36 @@ export default function Home() {
             style={styles.input}
           />
         </div>
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Categories:</label>
+          <select 
+            multiple 
+            value={selectedCategories} 
+            onChange={handleCategoryChange} 
+            style={styles.input}
+          >
+            {categories?.map((category) => (
+              <option key={category._id} value={category._id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Add New Category:</label>
+          <input
+            type="text"
+            value={newCategory}
+            onChange={(e) => setNewCategory(e.target.value)}
+            placeholder="New Category"
+            style={styles.input}
+          />
+        </div>
         <button type="submit" style={styles.button} disabled={isLoading}>
           {isLoading ? 'Uploading...' : 'Submit'}
         </button>
       </form>
-      {isLoading ? <div style={styles.loader}>Loading...</div> : <p style={styles.responseMessage}>{responseMessage}</p>} {/* Loader */}
+      {isLoading ? <div style={styles.loader}>Loading...</div> : <p style={styles.responseMessage}>{responseMessage}</p>}
     </div>
   );
 }
