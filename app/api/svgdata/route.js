@@ -80,12 +80,13 @@ export async function POST(req) {
     // Convert the PNG buffer to a base64 string
     const pngData = pngBuffer.toString('base64');
 
-    // Insert original SVG data, modified PNG data, and associated categories
+    // Insert original SVG data, modified PNG data, associated categories, and current date as ISO string
     const result = await svgDataCollection.insertOne({
       svgData: originalSvgData,
       colors,
       pngData,
-      categories: selectedCategories // Insert the associated categories
+      categories: selectedCategories, // Insert the associated categories
+      date: new Date().toISOString() // Add the current date as an ISO string
     });
 
     return NextResponse.json({ message: 'Data inserted successfully', result }, { headers });
