@@ -2,16 +2,7 @@ import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
 
 const uri = process.env.MONGODB_URI;
-let client;
-let clientPromise;
-
-if (!client) {
-  client = new MongoClient(uri, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  });
-  clientPromise = client.connect();
-}
+const client = new MongoClient(uri);
 
 function setCORSHeaders() {
   return {
@@ -30,7 +21,7 @@ export async function GET(req) {
   }
 
   try {
-    await clientPromise;
+    await client.connect();
     const database = client.db('svgfacetpaintbynumber');
     const categoriesCollection = database.collection('categories');
 
