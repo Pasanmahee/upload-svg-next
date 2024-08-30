@@ -11,18 +11,18 @@ export default function Home() {
   const [selectedCategories, setSelectedCategories] = useState([]); // State for selected categories
   const [newCategory, setNewCategory] = useState(''); // State for new category input
 
+  // Fetch existing categories from the database when component mounts
+  const fetchCategories = async () => {
+    try {
+      const res = await fetch('/api/categories');
+      const data = await res.json();
+      setCategories(data.categories);
+    } catch (err) {
+      setResponseMessage('Error fetching categories: ' + err.message);
+    }
+  };
+
   useEffect(() => {
-    // Fetch existing categories from the database when component mounts
-    const fetchCategories = async () => {
-      try {
-        const res = await fetch('/api/categories');
-        const data = await res.json();
-        setCategories(data.categories);
-      } catch (err) {
-        setResponseMessage('Error fetching categories: ' + err.message);
-      }
-    };
-    
     fetchCategories();
   }, []);
 
@@ -89,10 +89,10 @@ export default function Home() {
       <form onSubmit={handleSubmit} style={styles.form}>
         <div style={styles.formGroup}>
           <label style={styles.label}>SVG File:</label>
-          <input 
-            type="file" 
-            accept=".svg" 
-            onChange={handleFileChange} 
+          <input
+            type="file"
+            accept=".svg"
+            onChange={handleFileChange}
             style={styles.input}
           />
           {fileName && <p style={styles.fileName}>File: {fileName}</p>}
@@ -109,11 +109,12 @@ export default function Home() {
         </div>
         <div style={styles.formGroup}>
           <label style={styles.label}>Categories:</label>
-          <select 
-            multiple 
-            value={selectedCategories} 
-            onChange={handleCategoryChange} 
-            style={styles.input}
+          <select
+            multiple
+            value={selectedCategories}
+            onChange={handleCategoryChange}
+            style={{ ...styles.input, height: '400px', width: '100%' }} // Adjust height and width as needed
+            size={5} // Number of visible options, adjust as needed
           >
             {categories?.map((category) => (
               <option key={category._id} value={category._id}>
