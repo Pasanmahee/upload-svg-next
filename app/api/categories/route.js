@@ -25,11 +25,13 @@ export async function GET(req) {
     const database = client.db('svgfacetpaintbynumber');
     const categoriesCollection = database.collection('categories');
 
-    // Fetch all categories
+    // Fetch all categories without pagination
     const categories = await categoriesCollection.find({}).toArray();
 
-    return NextResponse.json({ categories }, { status: 200, headers });
+    return NextResponse.json({ categories }, { headers });
   } catch (err) {
     return NextResponse.json({ message: 'Error fetching categories', error: err.message }, { status: 500, headers });
+  } finally {
+    await client.close();
   }
 }
