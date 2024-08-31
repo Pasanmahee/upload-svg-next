@@ -38,7 +38,6 @@ export async function GET(req) {
     const data = await collection.find(query, {
       projection: {
         _id: 1,
-        svgData: 1,
         pngData: 1,
         categories: 1,
         date: 1,
