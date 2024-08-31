@@ -31,7 +31,5 @@ export async function GET(req) {
     return NextResponse.json({ categories }, { headers });
   } catch (err) {
     return NextResponse.json({ message: 'Error fetching categories', error: err.message }, { status: 500, headers });
-  } finally {
-    await client.close();
   }
 }
