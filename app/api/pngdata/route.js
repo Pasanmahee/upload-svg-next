@@ -43,9 +43,9 @@ export async function GET(req) {
         date: 1,
       }
     })
-    .skip(skip)
-    .limit(limit)
-    .toArray();
+      .skip(skip)
+      .limit(limit)
+      .toArray();
 
     // Retrieve the total count of documents that match the query for pagination metadata
     const total = await collection.countDocuments(query);

@@ -118,7 +118,15 @@ export async function GET(req) {
     const database = client.db('svgfacetpaintbynumber');
     const collection = database.collection('svgdata');
 
-    const data = await collection.findOne({ _id: new ObjectId(id) });
+    const data = await collection.findOne({ _id: new ObjectId(id) }, {
+      projection: {
+        _id: 1,
+        svgData: 1,
+        colors: 1,
+        categories: 1,
+        date: 1
+      }
+    });
 
     if (!data) {
       return NextResponse.json({ message: 'Document not found' }, { status: 404, headers });
