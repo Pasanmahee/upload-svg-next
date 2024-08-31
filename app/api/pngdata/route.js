@@ -1,6 +1,5 @@
-// pages/api/svgdata/projection.js
 import { NextResponse } from 'next/server';
-import { MongoClient } from 'mongodb';
+import { MongoClient, ObjectId } from 'mongodb';
 
 const uri = process.env.MONGODB_URI;
 const client = new MongoClient(uri);
@@ -24,6 +23,7 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const page = parseInt(searchParams.get('page') || '1');
   const limit = parseInt(searchParams.get('limit') || '10');
+  const categoryId = searchParams.get('categoryId');
   const skip = (page - 1) * limit;
 
   try {
@@ -31,14 +31,25 @@ export async function GET(req) {
     const database = client.db('svgfacetpaintbynumber');
     const collection = database.collection('svgdata');
 
-    // Query to retrieve only the _id and pngData fields with pagination
-    const data = await collection.find({}, { projection: { _id: 1, pngData: 1, categories: 1 } })
-                                  .skip(skip)
-                                  .limit(limit)
-                                  .toArray();
+    // Build the query object based on the presence of categoryId
+    const query = categoryId ? { categories: categoryId } : {};
 
-    // Retrieve the total count of documents for pagination metadata
-    const total = await collection.countDocuments();
+    // Query to retrieve only the relevant fields with pagination
+    const data = await collection.find(query, {
+      projection: {
+        _id: 1,
+        svgData: 1,
+        pngData: 1,
+        categories: 1,
+        date: 1,
+      }
+    })
+    .skip(skip)
+    .limit(limit)
+    .toArray();
+
+    // Retrieve the total count of documents that match the query for pagination metadata
+    const total = await collection.countDocuments(query);
     const totalPages = Math.ceil(total / limit);
 
     const response = {
