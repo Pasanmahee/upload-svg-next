@@ -48,9 +48,9 @@ export async function POST(req) {
   modifiedSvgData = modifiedSvgData.replace(/fill\s*:\s*rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\);/gi, 'fill:#FFFFFF;');
 
   // Modify the SVG content: replace all stroke colors with the specified color from 'colors'
-  // const strokeColor = colors.stroke || '#000000'; // Default to black if no stroke color is specified
-  // modifiedSvgData = modifiedSvgData.replace(/stroke\s*=\s*['"][^'"]*['"]/gi, `stroke="${strokeColor}"`);
-  // modifiedSvgData = modifiedSvgData.replace(/stroke\s*:\s*rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\);/gi, `stroke:${strokeColor};`);
+  const strokeColor = colors.stroke || '#000000'; // Default to black if no stroke color is specified
+  modifiedSvgData = modifiedSvgData.replace(/stroke\s*=\s*['"][^'"]*['"]/gi, `stroke="${strokeColor}"`);
+  modifiedSvgData = modifiedSvgData.replace(/stroke\s*:\s*rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\);/gi, `stroke:${strokeColor};`);
 
   // Save the modified SVG back to a buffer for further processing
   const modifiedBuffer = Buffer.from(modifiedSvgData, 'utf8');
