@@ -3,15 +3,16 @@ import { useState, useEffect } from 'react';
 
 export default function Home() {
   const [svgFile, setSvgFile] = useState(null);
+  const [pngFile, setPngFile] = useState(null); // State for PNG file
+  const [uploadPng, setUploadPng] = useState(false); // State to determine if PNG upload is selected
   const [colors, setColors] = useState('');
   const [responseMessage, setResponseMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [fileName, setFileName] = useState('');
-  const [categories, setCategories] = useState([]); // State for all categories
-  const [selectedCategories, setSelectedCategories] = useState([]); // State for selected categories
-  const [newCategory, setNewCategory] = useState(''); // State for new category input
+  const [categories, setCategories] = useState([]); 
+  const [selectedCategories, setSelectedCategories] = useState([]);
+  const [newCategory, setNewCategory] = useState('');
 
-  // Fetch existing categories from the database when component mounts
   const fetchCategories = async () => {
     try {
       const res = await fetch('/api/categories');
@@ -30,6 +31,11 @@ export default function Home() {
     const file = e.target.files[0];
     setSvgFile(file);
     setFileName(file.name);
+  };
+
+  const handlePngFileChange = (e) => {
+    const file = e.target.files[0];
+    setPngFile(file);
   };
 
   const handleCategoryChange = (e) => {
@@ -56,7 +62,11 @@ export default function Home() {
     formData.append('file', svgFile);
     formData.append('colors', JSON.stringify(colorArray));
     formData.append('categories', JSON.stringify(selectedCategories));
-    formData.append('newCategory', newCategory.trim()); // Include new category in the form data
+    formData.append('newCategory', newCategory.trim());
+
+    if (uploadPng && pngFile) {
+      formData.append('pngFile', pngFile);
+    }
 
     try {
       const res = await fetch('/api/svgdata', {
@@ -69,10 +79,11 @@ export default function Home() {
 
       if (res.ok) {
         setSvgFile(null);
+        setPngFile(null);
         setColors('');
         setFileName('');
         setSelectedCategories([]);
-        setNewCategory(''); // Clear the new category input
+        setNewCategory('');
         fetchCategories();
         e.target.reset();
       }
@@ -113,8 +124,8 @@ export default function Home() {
             multiple
             value={selectedCategories}
             onChange={handleCategoryChange}
-            style={{ ...styles.input, height: '400px', width: '100%' }} // Adjust height and width as needed
-            size={5} // Number of visible options, adjust as needed
+            style={{ ...styles.input, height: '400px', width: '100%' }}
+            size={5}
           >
             {categories?.map((category) => (
               <option key={category._id} value={category._id}>
@@ -133,11 +144,34 @@ export default function Home() {
             style={styles.input}
           />
         </div>
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Upload PNG Image:</label>
+          <input
+            type="checkbox"
+            checked={uploadPng}
+            onChange={(e) => setUploadPng(e.target.checked)}
+          />
+        </div>
+        {uploadPng && (
+          <div style={styles.formGroup}>
+            <label style={styles.label}>PNG File:</label>
+            <input
+              type="file"
+              accept=".png"
+              onChange={handlePngFileChange}
+              style={styles.input}
+            />
+          </div>
+        )}
         <button type="submit" style={styles.button} disabled={isLoading}>
           {isLoading ? 'Uploading...' : 'Submit'}
         </button>
       </form>
-      {isLoading ? <div style={styles.loader}>Loading...</div> : <p style={styles.responseMessage}>{responseMessage}</p>}
+      {isLoading ? (
+        <div style={styles.loader}>Loading...</div>
+      ) : (
+        <p style={styles.responseMessage}>{responseMessage}</p>
+      )}
     </div>
   );
 }

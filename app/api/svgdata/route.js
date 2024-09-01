@@ -26,8 +26,9 @@ export async function POST(req) {
   const formData = await req.formData();
   const file = formData.get('file');
   const colors = JSON.parse(formData.get('colors'));
-  const selectedCategories = JSON.parse(formData.get('categories')); // Retrieve selected categories
-  const newCategory = formData.get('newCategory'); // Retrieve the new category if provided
+  const selectedCategories = JSON.parse(formData.get('categories'));
+  const newCategory = formData.get('newCategory');
+  const pngFile = formData.get('pngFile'); // Retrieve the uploaded PNG file if provided
 
   if (!file || !colors) {
     return NextResponse.json({ message: 'File or colors missing' }, { status: 400, headers });
@@ -48,7 +49,7 @@ export async function POST(req) {
   modifiedSvgData = modifiedSvgData.replace(/fill\s*:\s*rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\);/gi, 'fill:#FFFFFF;');
 
   // Modify the SVG content: replace all stroke colors with the specified color from 'colors'
-  const strokeColor = colors.stroke || '#000000'; // Default to black if no stroke color is specified
+  const strokeColor = colors.stroke || '#000000';
   modifiedSvgData = modifiedSvgData.replace(/stroke\s*=\s*['"][^'"]*['"]/gi, `stroke="${strokeColor}"`);
   modifiedSvgData = modifiedSvgData.replace(/stroke\s*:\s*rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\);/gi, `stroke:${strokeColor};`);
 
@@ -64,36 +65,33 @@ export async function POST(req) {
     const svgDataCollection = database.collection('svgdata');
     const categoriesCollection = database.collection('categories');
 
-    // Handle new category insertion if provided
     let newCategoryId = null;
     if (newCategory && newCategory.trim() !== '') {
       const categoryResult = await categoriesCollection.insertOne({ name: newCategory.trim() });
-      newCategoryId = categoryResult.insertedId.toString(); // Retrieve the new category ID
-      selectedCategories.push(newCategoryId); // Add the new category ID to the selected categories
+      newCategoryId = categoryResult.insertedId.toString();
+      selectedCategories.push(newCategoryId);
     }
 
-    // Convert modified SVG to PNG using sharp
-    const pngBuffer = await sharp(modifiedBuffer)
-      .png()
-      .toBuffer();
+    let pngData;
+    if (pngFile) {
+      const pngBuffer = await pngFile.arrayBuffer();
+      pngData = Buffer.from(pngBuffer).toString('base64');
+    } else {
+      const pngBuffer = await sharp(modifiedBuffer).png().toBuffer();
+      pngData = pngBuffer.toString('base64');
+    }
 
-    // Convert the PNG buffer to a base64 string
-    const pngData = pngBuffer.toString('base64');
-
-    // Insert original SVG data, modified PNG data, associated categories, and current date as ISO string
     const result = await svgDataCollection.insertOne({
       svgData: originalSvgData,
       colors,
       pngData,
-      categories: selectedCategories, // Insert the associated categories
-      date: new Date().toISOString() // Add the current date as an ISO string
+      categories: selectedCategories,
+      date: new Date().toISOString(),
     });
 
     return NextResponse.json({ message: 'Data inserted successfully', result }, { headers });
   } finally {
     await client.close();
-
-    // Optionally delete the uploaded file after processing
     await fs.unlink(filePath);
   }
 }
@@ -101,7 +99,6 @@ export async function POST(req) {
 export async function GET(req) {
   const headers = setCORSHeaders();
 
-  // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return NextResponse.json({}, { status: 200, headers });
   }
@@ -124,8 +121,8 @@ export async function GET(req) {
         svgData: 1,
         colors: 1,
         categories: 1,
-        date: 1
-      }
+        date: 1,
+      },
     });
 
     if (!data) {
