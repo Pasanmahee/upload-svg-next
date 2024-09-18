@@ -28,7 +28,7 @@ export async function POST(req) {
   const colors = JSON.parse(formData.get('colors'));
   const selectedCategories = JSON.parse(formData.get('categories'));
   const newCategory = formData.get('newCategory');
-  const pngFile = formData.get('pngFile'); // Retrieve the uploaded PNG file if provided
+  const imageFile = formData.get('imageFile'); // Retrieve the uploaded PNG or JPG file if provided
 
   if (!file || !colors) {
     return NextResponse.json({ message: 'File or colors missing' }, { status: 400, headers });
@@ -72,19 +72,42 @@ export async function POST(req) {
       selectedCategories.push(newCategoryId);
     }
 
-    let pngData;
-    if (pngFile) {
-      const pngBuffer = await pngFile.arrayBuffer();
-      pngData = Buffer.from(pngBuffer).toString('base64');
+    let imageData;
+    if (imageFile) {
+      const imageBuffer = await imageFile.arrayBuffer();
+      const buffer = Buffer.from(imageBuffer);
+
+      const imageFormat = imageFile.type === 'image/jpeg' ? 'jpeg' : 'png';
+
+      // Reduce the size of the uploaded image file dynamically
+      const { width, height } = await sharp(buffer).metadata();
+      const reducedWidth = Math.floor(width * 0.9);  // Dynamically reduce width by 30%
+      const reducedHeight = Math.floor(height * 0.9);  // Dynamically reduce height by 30%
+
+      const resizedImageBuffer = await sharp(buffer)
+        .resize(reducedWidth, reducedHeight)  // Resize to reduced resolution
+        [imageFormat]({ quality: 80 })  // Compress and adjust quality
+        .toBuffer();
+
+      imageData = resizedImageBuffer.toString('base64');
     } else {
-      const pngBuffer = await sharp(modifiedBuffer).png().toBuffer();
-      pngData = pngBuffer.toString('base64');
+      // Generate a PNG from the modified SVG with resizing and compression
+      const { width, height } = await sharp(modifiedBuffer).metadata();
+      const reducedWidth = Math.floor(width * 0.9);  // Dynamically reduce width by 30%
+      const reducedHeight = Math.floor(height * 0.9);  // Dynamically reduce height by 30%
+
+      const pngBuffer = await sharp(modifiedBuffer)
+        .resize(reducedWidth, reducedHeight)  // Resize to reduced resolution
+        .png({ compressionLevel: 9, quality: 80 })  // Compress and adjust quality
+        .toBuffer();
+
+      imageData = pngBuffer.toString('base64');
     }
 
     const result = await svgDataCollection.insertOne({
       svgData: originalSvgData,
       colors,
-      pngData,
+      pngData: imageData,
       categories: selectedCategories,
       date: new Date().toISOString(),
     });

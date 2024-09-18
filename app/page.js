@@ -3,13 +3,13 @@ import { useState, useEffect } from 'react';
 
 export default function Home() {
   const [svgFile, setSvgFile] = useState(null);
-  const [pngFile, setPngFile] = useState(null); // State for PNG file
-  const [uploadPng, setUploadPng] = useState(false); // State to determine if PNG upload is selected
+  const [imageFile, setImageFile] = useState(null); // State for image files (JPG, PNG)
+  const [uploadImage, setUploadImage] = useState(false); // State to determine if image upload is selected
   const [colors, setColors] = useState('');
   const [responseMessage, setResponseMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [fileName, setFileName] = useState('');
-  const [categories, setCategories] = useState([]); 
+  const [categories, setCategories] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [newCategory, setNewCategory] = useState('');
 
@@ -33,9 +33,9 @@ export default function Home() {
     setFileName(file.name);
   };
 
-  const handlePngFileChange = (e) => {
+  const handleImageFileChange = (e) => {
     const file = e.target.files[0];
-    setPngFile(file);
+    setImageFile(file);
   };
 
   const handleCategoryChange = (e) => {
@@ -64,8 +64,8 @@ export default function Home() {
     formData.append('categories', JSON.stringify(selectedCategories));
     formData.append('newCategory', newCategory.trim());
 
-    if (uploadPng && pngFile) {
-      formData.append('pngFile', pngFile);
+    if (uploadImage && imageFile) {
+      formData.append('imageFile', imageFile);
     }
 
     try {
@@ -79,7 +79,7 @@ export default function Home() {
 
       if (res.ok) {
         setSvgFile(null);
-        setPngFile(null);
+        setImageFile(null);
         setColors('');
         setFileName('');
         setSelectedCategories([]);
@@ -145,20 +145,20 @@ export default function Home() {
           />
         </div>
         <div style={styles.formGroup}>
-          <label style={styles.label}>Upload PNG Image:</label>
+          <label style={styles.label}>Upload Image (JPG or PNG):</label>
           <input
             type="checkbox"
-            checked={uploadPng}
-            onChange={(e) => setUploadPng(e.target.checked)}
+            checked={uploadImage}
+            onChange={(e) => setUploadImage(e.target.checked)}
           />
         </div>
-        {uploadPng && (
+        {uploadImage && (
           <div style={styles.formGroup}>
-            <label style={styles.label}>PNG File:</label>
+            <label style={styles.label}>Image File (JPG or PNG):</label>
             <input
               type="file"
-              accept=".png"
-              onChange={handlePngFileChange}
+              accept=".png, .jpg, .jpeg"
+              onChange={handleImageFileChange}
               style={styles.input}
             />
           </div>
