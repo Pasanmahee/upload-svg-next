@@ -4,7 +4,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import sharp from 'sharp';
 
-const uri = process.env.MONGODB_URI;
+const uri = process.env.NEXT_PUBLIC_MONGODB_URI;
 const client = new MongoClient(uri);
 
 function setCORSHeaders() {
