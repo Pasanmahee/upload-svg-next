@@ -22,6 +22,7 @@ WORKDIR /app
 
 # Set environment variables for Next.js
 ENV NODE_ENV=production
+ENV PORT=8080 
 
 # Copy build files and node_modules from builder
 COPY --from=builder /app/.next ./.next
@@ -29,8 +30,8 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 
-# Expose the application port
-EXPOSE 3000
+# Expose the Google Cloud Run port
+EXPOSE 8080
 
-# Start the Next.js app
+# Start the Next.js app and listen on port 8080
 CMD ["npm", "start"]
