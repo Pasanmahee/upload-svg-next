@@ -22,13 +22,17 @@ WORKDIR /app
 
 # Set environment variables for Next.js
 ENV NODE_ENV=production
-ENV PORT=8080 
+ENV PORT=8080
+ENV GOOGLE_APPLICATION_CREDENTIALS=/app/image-processing-server-435318-c709ff063a2b.json 
 
 # Copy build files and node_modules from builder
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
+
+# Copy the image-processing-server-435318-c709ff063a2b.json into the image
+COPY ./public/image-processing-server-435318-c709ff063a2b.json /app/image-processing-server-435318-c709ff063a2b.json
 
 # Expose the Google Cloud Run port
 EXPOSE 8080
