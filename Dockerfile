@@ -22,7 +22,11 @@ WORKDIR /app
 
 # Set environment variables for Next.js
 ENV NODE_ENV=production
-ENV PORT=8080 
+ENV PORT=8080
+ENV GOOGLE_APPLICATION_CREDENTIALS=/app/image-processing-server-credentials.json
+
+# Expose the port
+EXPOSE 8080
 
 # Copy build files and node_modules from builder
 COPY --from=builder /app/.next ./.next
@@ -30,8 +34,6 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 
-# Expose the Google Cloud Run port
-EXPOSE 8080
-
+# Fetch secret during runtime, not during the build process
 # Start the Next.js app and listen on port 8080
 CMD ["npm", "start"]

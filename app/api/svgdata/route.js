@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { MongoClient, ObjectId } from 'mongodb';
 import { promises as fs } from 'fs';
 import { join } from 'path';
+import { Storage } from '@google-cloud/storage';
 import sharp from 'sharp';
 
 const uri = process.env.NEXT_PUBLIC_MONGODB_URI;
@@ -59,6 +60,10 @@ export async function POST(req) {
   // Save the modified SVG file to the server
   await fs.writeFile(filePath, modifiedBuffer);
 
+  // Google Cloud Storage setup
+  const bucketName = 'svg-image-processing-bucket';  // Replace with your actual bucket name
+  const storage = new Storage();
+
   try {
     await client.connect();
     const database = client.db('svgfacetpaintbynumber');
@@ -71,6 +76,27 @@ export async function POST(req) {
       newCategoryId = categoryResult.insertedId.toString();
       selectedCategories.push(newCategoryId);
     }
+
+    // Generate a random number (or use a more unique identifier like a UUID)
+    const randomNumber = Math.floor(Math.random() * 1000000); // Generates a random number between 0 and 999999
+
+    // Update the cloudFilePath to include the random number
+    const cloudFilePath = `svgs/${file.name}-${randomNumber}`;
+
+    // Upload original SVG data to Google Cloud Storage
+    const bucket = storage.bucket(bucketName);
+    const fileInBucket = bucket.file(cloudFilePath);
+
+    // Save the originalSvgData to the bucket
+    await fileInBucket.save(originalSvgData, {
+      resumable: false,
+      metadata: {
+        contentType: 'image/svg+xml',
+      },
+    });
+
+    // Save the URL of the SVG in Google Cloud Storage
+    const publicUrl = `https://storage.googleapis.com/${bucketName}/${cloudFilePath}`;
 
     let imageData;
     if (imageFile) {
@@ -86,7 +112,7 @@ export async function POST(req) {
 
       const resizedImageBuffer = await sharp(buffer)
         .resize(reducedWidth, reducedHeight)  // Resize to reduced resolution
-        [imageFormat]({ quality: 80 })  // Compress and adjust quality
+      [imageFormat]({ quality: 80 })  // Compress and adjust quality
         .toBuffer();
 
       imageData = resizedImageBuffer.toString('base64');
@@ -105,7 +131,7 @@ export async function POST(req) {
     }
 
     const result = await svgDataCollection.insertOne({
-      svgData: originalSvgData,
+      svgData: publicUrl,  // Save the URL instead of raw SVG data
       colors,
       pngData: imageData,
       categories: selectedCategories,
@@ -141,18 +167,36 @@ export async function GET(req) {
     const data = await collection.findOne({ _id: new ObjectId(id) }, {
       projection: {
         _id: 1,
-        svgData: 1,
+        svgData: 1,  // Public URL stored in svgData field
         colors: 1,
         categories: 1,
         date: 1,
       },
     });
 
-    if (!data) {
-      return NextResponse.json({ message: 'Document not found' }, { status: 404, headers });
+    if (!data || !data.svgData) {
+      return NextResponse.json({ message: 'Document not found or SVG data missing' }, { status: 404, headers });
     }
 
-    return NextResponse.json(data, { headers });
+    // Fetch the raw SVG data from the public URL
+    const response = await fetch(data.svgData);
+    if (!response.ok) {
+      return NextResponse.json({ message: 'Failed to fetch SVG data' }, { status: 500, headers });
+    }
+
+    const rawSvgData = await response.text();
+
+    // Prepare the response object with metadata and raw SVG data
+    const responseData = {
+      _id: data._id,
+      colors: data.colors,
+      categories: data.categories,
+      date: data.date,
+      svgData: rawSvgData,  // Raw SVG content
+    };
+
+    // Send the response data as JSON
+    return NextResponse.json(responseData, { headers });
   } finally {
     await client.close();
   }
