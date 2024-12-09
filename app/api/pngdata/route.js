@@ -12,13 +12,14 @@ function setCORSHeaders() {
   };
 }
 
+// Dedicated OPTIONS handler for CORS preflight
+export async function OPTIONS() {
+  const headers = setCORSHeaders();
+  return new NextResponse(null, { status: 204, headers });
+}
+
 export async function GET(req) {
   const headers = setCORSHeaders();
-
-  // Handle CORS preflight requests
-  if (req.method === 'OPTIONS') {
-    return NextResponse.json({}, { status: 200, headers });
-  }
 
   const { searchParams } = new URL(req.url);
   const page = parseInt(searchParams.get('page') || '1');
@@ -41,13 +42,13 @@ export async function GET(req) {
         pngData: 1,
         categories: 1,
         date: 1,
-      }
+      },
     })
       .skip(skip)
       .limit(limit)
       .toArray();
 
-    // Retrieve the total count of documents that match the query for pagination metadata
+    // Retrieve the total count of documents that match the query
     const total = await collection.countDocuments(query);
     const totalPages = Math.ceil(total / limit);
 
