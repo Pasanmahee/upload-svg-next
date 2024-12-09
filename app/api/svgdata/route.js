@@ -16,13 +16,14 @@ function setCORSHeaders() {
   };
 }
 
+// Handle preflight requests
+export async function OPTIONS() {
+  const headers = setCORSHeaders();
+  return new NextResponse(null, { status: 204, headers });
+}
+
 export async function POST(req) {
   const headers = setCORSHeaders();
-
-  // Handle CORS preflight requests
-  if (req.method === 'OPTIONS') {
-    return NextResponse.json({}, { status: 200, headers });
-  }
 
   const formData = await req.formData();
   const file = formData.get('file');
@@ -77,8 +78,8 @@ export async function POST(req) {
       selectedCategories.push(newCategoryId);
     }
 
-    // Generate a random number (or use a more unique identifier like a UUID)
-    const randomNumber = Math.floor(Math.random() * 1000000); // Generates a random number between 0 and 999999
+    // Generate a random number
+    const randomNumber = Math.floor(Math.random() * 1000000);
 
     // Update the cloudFilePath to include the random number
     const cloudFilePath = `svgs/${file.name}-${randomNumber}`;
@@ -107,31 +108,31 @@ export async function POST(req) {
 
       // Reduce the size of the uploaded image file dynamically
       const { width, height } = await sharp(buffer).metadata();
-      const reducedWidth = Math.floor(width * 0.9);  // Dynamically reduce width by 30%
-      const reducedHeight = Math.floor(height * 0.9);  // Dynamically reduce height by 30%
+      const reducedWidth = Math.floor(width * 0.9);  
+      const reducedHeight = Math.floor(height * 0.9);
 
       const resizedImageBuffer = await sharp(buffer)
-        .resize(reducedWidth, reducedHeight)  // Resize to reduced resolution
-      [imageFormat]({ quality: 80 })  // Compress and adjust quality
+        .resize(reducedWidth, reducedHeight) 
+        [imageFormat]({ quality: 80 })
         .toBuffer();
 
       imageData = resizedImageBuffer.toString('base64');
     } else {
       // Generate a PNG from the modified SVG with resizing and compression
       const { width, height } = await sharp(modifiedBuffer).metadata();
-      const reducedWidth = Math.floor(width * 0.9);  // Dynamically reduce width by 30%
-      const reducedHeight = Math.floor(height * 0.9);  // Dynamically reduce height by 30%
+      const reducedWidth = Math.floor(width * 0.9);
+      const reducedHeight = Math.floor(height * 0.9);
 
       const pngBuffer = await sharp(modifiedBuffer)
-        .resize(reducedWidth, reducedHeight)  // Resize to reduced resolution
-        .png({ compressionLevel: 9, quality: 80 })  // Compress and adjust quality
+        .resize(reducedWidth, reducedHeight)
+        .png({ compressionLevel: 9, quality: 80 })
         .toBuffer();
 
       imageData = pngBuffer.toString('base64');
     }
 
     const result = await svgDataCollection.insertOne({
-      svgData: publicUrl,  // Save the URL instead of raw SVG data
+      svgData: publicUrl,  
       colors,
       pngData: imageData,
       categories: selectedCategories,
@@ -148,10 +149,6 @@ export async function POST(req) {
 export async function GET(req) {
   const headers = setCORSHeaders();
 
-  if (req.method === 'OPTIONS') {
-    return NextResponse.json({}, { status: 200, headers });
-  }
-
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
 
@@ -167,7 +164,7 @@ export async function GET(req) {
     const data = await collection.findOne({ _id: new ObjectId(id) }, {
       projection: {
         _id: 1,
-        svgData: 1,  // Public URL stored in svgData field
+        svgData: 1,  
         colors: 1,
         categories: 1,
         date: 1,
@@ -192,10 +189,9 @@ export async function GET(req) {
       colors: data.colors,
       categories: data.categories,
       date: data.date,
-      svgData: rawSvgData,  // Raw SVG content
+      svgData: rawSvgData,
     };
 
-    // Send the response data as JSON
     return NextResponse.json(responseData, { headers });
   } finally {
     await client.close();
