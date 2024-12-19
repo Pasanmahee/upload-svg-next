@@ -36,12 +36,13 @@ export async function POST(req) {
     return NextResponse.json({ message: 'File or colors missing' }, { status: 400, headers });
   }
 
-  const filePath = join(process.cwd(), 'uploads', file.name);
+  // Use a writable directory for temporary file operations
+  const tempDir = '/tmp/uploads';
+  await fs.mkdir(tempDir, { recursive: true });
+
+  const filePath = join(tempDir, file.name);
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
-
-  // Ensure the uploads directory exists
-  await fs.mkdir(join(process.cwd(), 'uploads'), { recursive: true });
 
   // Convert buffer to a string to get the original SVG content
   const originalSvgData = buffer.toString('utf8');
@@ -58,7 +59,7 @@ export async function POST(req) {
   // Save the modified SVG back to a buffer for further processing
   const modifiedBuffer = Buffer.from(modifiedSvgData, 'utf8');
 
-  // Save the modified SVG file to the server
+  // Save the modified SVG file to the server (temporary directory)
   await fs.writeFile(filePath, modifiedBuffer);
 
   // Google Cloud Storage setup
@@ -142,6 +143,7 @@ export async function POST(req) {
     return NextResponse.json({ message: 'Data inserted successfully', result }, { headers });
   } finally {
     await client.close();
+    // Clean up the temporary file
     await fs.unlink(filePath);
   }
 }
