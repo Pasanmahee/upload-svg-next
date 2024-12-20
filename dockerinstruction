@@ -1,0 +1,4 @@
+// sudo docker build -t upload-svg-next .
+// sudo docker stop d36946db48e3
+// sudo docker run -p 8080:8080 upload-svg-next
+// sudo kill -9 `sudo lsof -t -i:8080`
