@@ -33,7 +33,10 @@ export async function POST(req) {
   const imageFile = formData.get('imageFile'); // Retrieve the uploaded PNG or JPG file if provided
 
   if (!file || !colors) {
-    return NextResponse.json({ message: 'File or colors missing' }, { status: 400, headers });
+    return NextResponse.json(
+      { message: 'File or colors missing' },
+      { status: 400, headers }
+    );
   }
 
   const filePath = join(process.cwd(), 'uploads', file.name);
@@ -47,13 +50,25 @@ export async function POST(req) {
   const originalSvgData = buffer.toString('utf8');
 
   // Modify the SVG content: replace all fill colors with white (#FFFFFF)
-  let modifiedSvgData = originalSvgData.replace(/fill\s*=\s*['"][^'"]*['"]/gi, 'fill="#FFFFFF"');
-  modifiedSvgData = modifiedSvgData.replace(/fill\s*:\s*rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\);/gi, 'fill:#FFFFFF;');
+  let modifiedSvgData = originalSvgData.replace(
+    /fill\s*=\s*['"][^'"]*['"]/gi,
+    'fill="#FFFFFF"'
+  );
+  modifiedSvgData = modifiedSvgData.replace(
+    /fill\s*:\s*rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\);/gi,
+    'fill:#FFFFFF;'
+  );
 
   // Modify the SVG content: replace all stroke colors with the specified color from 'colors'
   const strokeColor = colors.stroke || '#000000';
-  modifiedSvgData = modifiedSvgData.replace(/stroke\s*=\s*['"][^'"]*['"]/gi, `stroke="${strokeColor}"`);
-  modifiedSvgData = modifiedSvgData.replace(/stroke\s*:\s*rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\);/gi, `stroke:${strokeColor};`);
+  modifiedSvgData = modifiedSvgData.replace(
+    /stroke\s*=\s*['"][^'"]*['"]/gi,
+    `stroke="${strokeColor}"`
+  );
+  modifiedSvgData = modifiedSvgData.replace(
+    /stroke\s*:\s*rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\);/gi,
+    `stroke:${strokeColor};`
+  );
 
   // Save the modified SVG back to a buffer for further processing
   const modifiedBuffer = Buffer.from(modifiedSvgData, 'utf8');
@@ -62,33 +77,50 @@ export async function POST(req) {
   await fs.writeFile(filePath, modifiedBuffer);
 
   // Google Cloud Storage setup
-  const bucketName = 'svg-image-processing-bucket';  // Replace with your actual bucket name
+  const bucketName = 'svg-image-processing-bucket'; // Replace with your actual bucket name
   const storage = new Storage();
 
+  // Generate a random number for unique file naming
+  const randomNumber = Math.floor(Math.random() * 1_000_000);
+
+  // We’ll store the SVG in: svgs/<fileName>-<randomNumber>.svg
+  const svgFileName = `svgs/${file.name}-${randomNumber}.svg`;
+
+  // We’ll store the PNG (or final image) in: images/<fileName>-<randomNumber>.png (or .jpeg)
+  // For clarity, extract the extension from imageFile if present
+  let imageFileExtension = 'png'; 
+  if (imageFile && imageFile.type === 'image/jpeg') {
+    imageFileExtension = 'jpeg';
+  }
+  const imageFileName = `images/${file.name}-${randomNumber}.${imageFileExtension}`;
+
   try {
+    // ---------------------
+    //   Connect to Mongo
+    // ---------------------
     await client.connect();
     const database = client.db('svgfacetpaintbynumber');
     const svgDataCollection = database.collection('svgdata');
     const categoriesCollection = database.collection('categories');
 
+    // ---------------------
+    //   Insert newCategory if provided
+    // ---------------------
     let newCategoryId = null;
     if (newCategory && newCategory.trim() !== '') {
-      const categoryResult = await categoriesCollection.insertOne({ name: newCategory.trim() });
+      const categoryResult = await categoriesCollection.insertOne({
+        name: newCategory.trim(),
+      });
       newCategoryId = categoryResult.insertedId.toString();
       selectedCategories.push(newCategoryId);
     }
 
-    // Generate a random number
-    const randomNumber = Math.floor(Math.random() * 1000000);
-
-    // Update the cloudFilePath to include the random number
-    const cloudFilePath = `svgs/${file.name}-${randomNumber}`;
-
-    // Upload original SVG data to Google Cloud Storage
+    // ---------------------
+    //   Upload Original SVG to GCS
+    // ---------------------
     const bucket = storage.bucket(bucketName);
-    const fileInBucket = bucket.file(cloudFilePath);
+    const fileInBucket = bucket.file(svgFileName);
 
-    // Save the originalSvgData to the bucket
     await fileInBucket.save(originalSvgData, {
       resumable: false,
       metadata: {
@@ -96,52 +128,69 @@ export async function POST(req) {
       },
     });
 
-    // Save the URL of the SVG in Google Cloud Storage
-    const publicUrl = `https://storage.googleapis.com/${bucketName}/${cloudFilePath}`;
+    // Generate a public URL for the SVG
+    const publicUrlSVG = `https://storage.googleapis.com/${bucketName}/${svgFileName}`;
 
-    let imageData;
+    // ---------------------
+    //   Prepare & Upload PNG (or user image) to GCS
+    // ---------------------
+    let resizedImageBuffer;
     if (imageFile) {
-      const imageBuffer = await imageFile.arrayBuffer();
-      const buffer = Buffer.from(imageBuffer);
+      // Use the uploaded PNG/JPG file instead
+      const imageArrayBuffer = await imageFile.arrayBuffer();
+      const rawImageBuffer = Buffer.from(imageArrayBuffer);
 
-      const imageFormat = imageFile.type === 'image/jpeg' ? 'jpeg' : 'png';
-
-      // Reduce the size of the uploaded image file dynamically
-      const { width, height } = await sharp(buffer).metadata();
-      const reducedWidth = Math.floor(width * 0.9);  
+      const { width, height } = await sharp(rawImageBuffer).metadata();
+      const reducedWidth = Math.floor(width * 0.9);
       const reducedHeight = Math.floor(height * 0.9);
 
-      const resizedImageBuffer = await sharp(buffer)
-        .resize(reducedWidth, reducedHeight) 
-        [imageFormat]({ quality: 80 })
+      resizedImageBuffer = await sharp(rawImageBuffer)
+        .resize(reducedWidth, reducedHeight)
+        [imageFileExtension]({ quality: 80 }) // If .jpeg, use jpeg() with { quality: 80 }
         .toBuffer();
-
-      imageData = resizedImageBuffer.toString('base64');
     } else {
-      // Generate a PNG from the modified SVG with resizing and compression
+      // Generate a PNG from the modified SVG
       const { width, height } = await sharp(modifiedBuffer).metadata();
       const reducedWidth = Math.floor(width * 0.9);
       const reducedHeight = Math.floor(height * 0.9);
 
-      const pngBuffer = await sharp(modifiedBuffer)
+      resizedImageBuffer = await sharp(modifiedBuffer)
         .resize(reducedWidth, reducedHeight)
         .png({ compressionLevel: 9, quality: 80 })
         .toBuffer();
-
-      imageData = pngBuffer.toString('base64');
     }
 
+    // Upload the resized PNG/JPEG buffer to GCS
+    const fileInBucketPNG = bucket.file(imageFileName);
+    await fileInBucketPNG.save(resizedImageBuffer, {
+      resumable: false,
+      metadata: {
+        // If imageFile was a JPEG, then contentType should be 'image/jpeg', otherwise 'image/png'
+        contentType: imageFileExtension === 'jpeg' ? 'image/jpeg' : 'image/png',
+      },
+    });
+
+    // Generate a public URL for the PNG
+    const publicUrlPNG = `https://storage.googleapis.com/${bucketName}/${imageFileName}`;
+
+    // ---------------------
+    //   Save to MongoDB
+    // ---------------------
     const result = await svgDataCollection.insertOne({
-      svgData: publicUrl,  
+      svgData: publicUrlSVG,     // store the SVG public URL
+      pngData: publicUrlPNG,     // store the PNG public URL
       colors,
-      pngData: imageData,
       categories: selectedCategories,
       date: new Date().toISOString(),
     });
 
-    return NextResponse.json({ message: 'Data inserted successfully', result }, { headers });
+    return NextResponse.json(
+      { message: 'Data inserted successfully', result },
+      { headers }
+    );
   } finally {
     await client.close();
+    // Clean up the locally-saved file
     await fs.unlink(filePath);
   }
 }
