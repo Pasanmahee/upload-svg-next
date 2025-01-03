@@ -213,7 +213,8 @@ export async function GET(req) {
     const data = await collection.findOne({ _id: new ObjectId(id) }, {
       projection: {
         _id: 1,
-        svgData: 1,  
+        svgData: 1, 
+        pngData: 1, 
         colors: 1,
         categories: 1,
         date: 1,
@@ -239,6 +240,7 @@ export async function GET(req) {
       categories: data.categories,
       date: data.date,
       svgData: rawSvgData,
+      pngData: data.pngData,
     };
 
     return NextResponse.json(responseData, { headers });
