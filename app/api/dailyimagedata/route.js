@@ -68,6 +68,7 @@ export async function GET(req) {
     // 7. Retrieve data with sorting, pagination, projection
     const data = await collection
       .find(query, { projection })
+      .sort({ date: -1 }) // Most recent first
       .skip(skip)
       .limit(limit)
       .toArray();
