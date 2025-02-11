@@ -12,44 +12,72 @@ function setCORSHeaders() {
   };
 }
 
+// Dedicated OPTIONS handler for CORS preflight (optional but recommended)
+export async function OPTIONS() {
+  const headers = setCORSHeaders();
+  return new NextResponse(null, { status: 204, headers });
+}
+
 export async function GET(req) {
   const headers = setCORSHeaders();
 
-  // Handle CORS preflight requests
+  // Handle CORS preflight requests if necessary (alternative to a separate OPTIONS function)
   if (req.method === 'OPTIONS') {
     return NextResponse.json({}, { status: 200, headers });
   }
 
-  const { searchParams } = new URL(req.url);
-  const page = parseInt(searchParams.get('page') || '1');
-  const limit = parseInt(searchParams.get('limit') || '10');
-  const skip = (page - 1) * limit;
-
   try {
+    // 1. Parse query parameters
+    const { searchParams } = new URL(req.url);
+    const page = parseInt(searchParams.get('page') || '1', 10);
+    const limit = parseInt(searchParams.get('limit') || '10', 10);
+    const skip = (page - 1) * limit;
+
+    // 2. Handle deviceRam parameter
+    const deviceRamParam = searchParams.get('deviceRam');
+    let deviceRam = 2; // default if missing or 'unknown'
+    if (deviceRamParam && deviceRamParam.toLowerCase() !== 'unknown') {
+      deviceRam = parseFloat(deviceRamParam);
+    }
+
+    // 3. Decide if we’re dealing with low-complexity (RAM < 4)
+    const threshold = 4;
+    const isLowComplexity = deviceRam < threshold;
+
+    // 4. Connect to MongoDB
     await client.connect();
     const database = client.db('svgfacetpaintbynumber');
     const collection = database.collection('svgdata');
 
-    // Query to exclude all documents that have a userId field
-    const query = { userId: { $exists: false } };
+    // 5. Build query:
+    //    - Exclude documents with userId (so userId does NOT exist).
+    //    - Filter by hasSimplifiedSvg based on deviceRam.
+    const query = {
+      userId: { $exists: false },
+      hasSimplifiedSvg: isLowComplexity ? true : false,
+    };
 
-    // Query to retrieve data sorted by date (most recent first), with pagination
-    const data = await collection.find(query, {
-      projection: {
-        _id: 1,
-        pngData: 1,
-        date: 1,
-      },
-    })
-      .sort({ date: -1 }) // Sort by date in descending order (most recent first)
+    // 6. (Optional) Decide on projection—fields you want to return.
+    //    For simplicity, we’re returning just _id, pngData, date.
+    const projection = {
+      _id: 1,
+      pngData: 1,
+      date: 1,
+    };
+
+    // 7. Retrieve data with sorting, pagination, projection
+    const data = await collection
+      .find(query, { projection })
+      .sort({ date: -1 })    // Most recent first
       .skip(skip)
       .limit(limit)
       .toArray();
 
-    // Retrieve the total count of documents that match the query for pagination metadata
+    // 8. Count total documents for pagination
     const total = await collection.countDocuments(query);
     const totalPages = Math.ceil(total / limit);
 
+    // 9. Return the response
     const response = {
       data,
       page,
