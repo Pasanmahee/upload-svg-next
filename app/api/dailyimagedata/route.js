@@ -41,7 +41,7 @@ export async function GET(req) {
     }
 
     // 3. Decide if we’re dealing with low-complexity (RAM < 4)
-    const threshold = 4;
+    const threshold = 5;
     const isLowComplexity = deviceRam < threshold; // true if RAM < 4
 
     // 4. Connect to MongoDB
