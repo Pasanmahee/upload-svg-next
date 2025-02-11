@@ -12,6 +12,7 @@ export default function Home() {
   const [categories, setCategories] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [newCategory, setNewCategory] = useState('');
+  const [hasSimplifiedSvg, setHasSimplifiedSvg] = useState(false); // NEW state for hasSimplifiedSvg
 
   const fetchCategories = async () => {
     try {
@@ -58,11 +59,15 @@ export default function Home() {
 
     const colorArray = colors.split(',').map((color) => color.trim());
 
+    // Build form data
     const formData = new FormData();
     formData.append('file', svgFile);
     formData.append('colors', JSON.stringify(colorArray));
     formData.append('categories', JSON.stringify(selectedCategories));
     formData.append('newCategory', newCategory.trim());
+
+    // Append the hasSimplifiedSvg as a string ("true"/"false")
+    formData.append('hasSimplifiedSvg', hasSimplifiedSvg.toString());
 
     if (uploadImage && imageFile) {
       formData.append('imageFile', imageFile);
@@ -78,12 +83,14 @@ export default function Home() {
       setResponseMessage(result.message);
 
       if (res.ok) {
+        // Reset states
         setSvgFile(null);
         setImageFile(null);
         setColors('');
         setFileName('');
         setSelectedCategories([]);
         setNewCategory('');
+        setHasSimplifiedSvg(false);
         fetchCategories();
         e.target.reset();
       }
@@ -108,6 +115,7 @@ export default function Home() {
           />
           {fileName && <p style={styles.fileName}>File: {fileName}</p>}
         </div>
+
         <div style={styles.formGroup}>
           <label style={styles.label}>Colors (comma-separated):</label>
           <input
@@ -118,6 +126,7 @@ export default function Home() {
             style={styles.input}
           />
         </div>
+
         <div style={styles.formGroup}>
           <label style={styles.label}>Categories:</label>
           <select
@@ -134,6 +143,7 @@ export default function Home() {
             ))}
           </select>
         </div>
+
         <div style={styles.formGroup}>
           <label style={styles.label}>Add New Category:</label>
           <input
@@ -144,6 +154,18 @@ export default function Home() {
             style={styles.input}
           />
         </div>
+
+        <div style={styles.formGroup}>
+          <label style={styles.label}>
+            Has Simplified SVG?
+          </label>
+          <input
+            type="checkbox"
+            checked={hasSimplifiedSvg}
+            onChange={(e) => setHasSimplifiedSvg(e.target.checked)}
+          />
+        </div>
+
         <div style={styles.formGroup}>
           <label style={styles.label}>Upload Image (JPG or PNG):</label>
           <input
@@ -152,6 +174,7 @@ export default function Home() {
             onChange={(e) => setUploadImage(e.target.checked)}
           />
         </div>
+
         {uploadImage && (
           <div style={styles.formGroup}>
             <label style={styles.label}>Image File (JPG or PNG):</label>
@@ -163,10 +186,12 @@ export default function Home() {
             />
           </div>
         )}
+
         <button type="submit" style={styles.button} disabled={isLoading}>
           {isLoading ? 'Uploading...' : 'Submit'}
         </button>
       </form>
+
       {isLoading ? (
         <div style={styles.loader}>Loading...</div>
       ) : (
