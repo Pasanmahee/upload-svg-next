@@ -36,7 +36,7 @@ export async function GET(req) {
   }
 
   // Define a threshold; devices with less than 4GB are considered low-RAM.
-  const threshold = 4;
+  const threshold = 5;
   const isLowComplexity = deviceRam < threshold;
 
   const skip = (page - 1) * limit;
