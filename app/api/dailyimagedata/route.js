@@ -49,35 +49,68 @@ export async function GET(req) {
     const database = client.db('svgfacetpaintbynumber');
     const collection = database.collection('svgdata');
 
-    // 5. Build the query:
-    //    - Exclude documents with userId (so userId does NOT exist).
-    //    - Return only hasSimplifiedSvg = true for low-RAM,
-    //      and hasSimplifiedSvg = false for high-RAM devices.
-    const query = {
+    // 5. Build the query (match stage for the pipeline)
+    const matchStage = {
       userId: { $exists: false },
       hasSimplifiedSvg: isLowComplexity,
     };
 
-    // 6. Projection: fields you want to return
-    const projection = {
-      _id: 1,
-      pngData: 1,
-      date: 1,
-    };
+    /**
+     * 6. Build two pipelines:
+     *    - pipelineData: actually fetch documents, grouped by day
+     *    - pipelineCount: count total distinct days
+     */
 
-    // 7. Retrieve data with sorting, pagination, projection
-    const data = await collection
-      .find(query, { projection })
-      .sort({ date: -1 }) // Most recent first
-      .skip(skip)
-      .limit(limit)
-      .toArray();
+    // Pipeline to fetch data for the current page
+    const pipelineData = [
+      { $match: matchStage },
+      { $sort: { date: -1 } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
+          // By sorting above, $first will be the most recent doc for that day
+          doc: { $first: '$$ROOT' },
+        },
+      },
+      // After grouping, we want to project a "flat" document structure
+      {
+        $project: {
+          _id: '$doc._id',
+          pngData: '$doc.pngData',
+          date: '$doc.date',
+        },
+      },
+      // We grouped by day which breaks the original sort order,
+      // so we must sort again by date descending
+      { $sort: { date: -1 } },
+      { $skip: skip },
+      { $limit: limit },
+    ];
 
-    // 8. Count total matching documents for pagination
-    const total = await collection.countDocuments(query);
+    // Pipeline to get the total number of distinct days
+    const pipelineCount = [
+      { $match: matchStage },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
+        },
+      },
+      {
+        $count: 'count',
+      },
+    ];
+
+    // Execute pipelines
+    const [data, totalResult] = await Promise.all([
+      collection.aggregate(pipelineData).toArray(),
+      collection.aggregate(pipelineCount).toArray(),
+    ]);
+
+    // Extract total count of distinct days
+    const total = totalResult?.[0]?.count || 0;
     const totalPages = Math.ceil(total / limit);
 
-    // 9. Return the response
+    // 7. Return the response
     const response = {
       data,
       page,
