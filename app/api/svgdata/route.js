@@ -31,6 +31,10 @@ export async function POST(req) {
   const selectedCategories = JSON.parse(formData.get('categories'));
   const newCategory = formData.get('newCategory');
   const imageFile = formData.get('imageFile'); // Retrieve the uploaded PNG or JPG file if provided
+  const hasSimplifiedSvgParam = formData.get('hasSimplifiedSvg');
+
+  // Convert the string value ("true"/"false") to a boolean
+  const hasSimplifiedSvg = hasSimplifiedSvgParam === 'true';
 
   if (!file || !colors) {
     return NextResponse.json(
@@ -88,7 +92,7 @@ export async function POST(req) {
 
   // We’ll store the PNG (or final image) in: images/<fileName>-<randomNumber>.png (or .jpeg)
   // For clarity, extract the extension from imageFile if present
-  let imageFileExtension = 'png'; 
+  let imageFileExtension = 'png';
   if (imageFile && imageFile.type === 'image/jpeg') {
     imageFileExtension = 'jpeg';
   }
@@ -146,7 +150,7 @@ export async function POST(req) {
 
       resizedImageBuffer = await sharp(rawImageBuffer)
         .resize(reducedWidth, reducedHeight)
-        [imageFileExtension]({ quality: 80 }) // If .jpeg, use jpeg() with { quality: 80 }
+      [imageFileExtension]({ quality: 80 }) // If .jpeg, use jpeg() with { quality: 80 }
         .toBuffer();
     } else {
       // Generate a PNG from the modified SVG
@@ -181,6 +185,7 @@ export async function POST(req) {
       pngData: publicUrlPNG,     // store the PNG public URL
       colors,
       categories: selectedCategories,
+      hasSimplifiedSvg,          // <<--- Store the boolean value
       date: new Date().toISOString(),
     });
 
@@ -213,8 +218,8 @@ export async function GET(req) {
     const data = await collection.findOne({ _id: new ObjectId(id) }, {
       projection: {
         _id: 1,
-        svgData: 1, 
-        pngData: 1, 
+        svgData: 1,
+        pngData: 1,
         colors: 1,
         categories: 1,
         date: 1,
