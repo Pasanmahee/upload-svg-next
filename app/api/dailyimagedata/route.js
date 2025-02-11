@@ -12,7 +12,7 @@ function setCORSHeaders() {
   };
 }
 
-// Dedicated OPTIONS handler for CORS preflight (optional but recommended)
+// Dedicated OPTIONS handler for CORS preflight
 export async function OPTIONS() {
   const headers = setCORSHeaders();
   return new NextResponse(null, { status: 204, headers });
@@ -21,7 +21,7 @@ export async function OPTIONS() {
 export async function GET(req) {
   const headers = setCORSHeaders();
 
-  // Handle CORS preflight requests if necessary (alternative to a separate OPTIONS function)
+  // Handle CORS preflight if needed
   if (req.method === 'OPTIONS') {
     return NextResponse.json({}, { status: 200, headers });
   }
@@ -35,30 +35,30 @@ export async function GET(req) {
 
     // 2. Handle deviceRam parameter
     const deviceRamParam = searchParams.get('deviceRam');
-    let deviceRam = 2; // default if missing or 'unknown'
+    let deviceRam = 2; // Default if missing or 'unknown'
     if (deviceRamParam && deviceRamParam.toLowerCase() !== 'unknown') {
       deviceRam = parseFloat(deviceRamParam);
     }
 
     // 3. Decide if we’re dealing with low-complexity (RAM < 4)
     const threshold = 4;
-    const isLowComplexity = deviceRam < threshold;
+    const isLowComplexity = deviceRam < threshold; // true if RAM < 4
 
     // 4. Connect to MongoDB
     await client.connect();
     const database = client.db('svgfacetpaintbynumber');
     const collection = database.collection('svgdata');
 
-    // 5. Build query:
+    // 5. Build the query:
     //    - Exclude documents with userId (so userId does NOT exist).
-    //    - Filter by hasSimplifiedSvg based on deviceRam.
+    //    - Return only hasSimplifiedSvg = true for low-RAM,
+    //      and hasSimplifiedSvg = false for high-RAM devices.
     const query = {
       userId: { $exists: false },
-      hasSimplifiedSvg: isLowComplexity ? true : false,
+      hasSimplifiedSvg: isLowComplexity,
     };
 
-    // 6. (Optional) Decide on projection—fields you want to return.
-    //    For simplicity, we’re returning just _id, pngData, date.
+    // 6. Projection: fields you want to return
     const projection = {
       _id: 1,
       pngData: 1,
@@ -68,12 +68,12 @@ export async function GET(req) {
     // 7. Retrieve data with sorting, pagination, projection
     const data = await collection
       .find(query, { projection })
-      .sort({ date: -1 })    // Most recent first
+      .sort({ date: -1 }) // Most recent first
       .skip(skip)
       .limit(limit)
       .toArray();
 
-    // 8. Count total documents for pagination
+    // 8. Count total matching documents for pagination
     const total = await collection.countDocuments(query);
     const totalPages = Math.ceil(total / limit);
 
