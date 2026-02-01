@@ -1,46 +1,52 @@
 import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
 
-const uri = process.env.NEXT_PUBLIC_MONGODB_URI;
-const client = new MongoClient(uri);
+export const runtime = 'nodejs';
 
-// Helper to set CORS headers
-function setCORSHeaders() {
+// Prefer server-only env var; keep NEXT_PUBLIC_ only as a temporary fallback.
+const uri = process.env.MONGODB_URI || process.env.NEXT_PUBLIC_MONGODB_URI;
+if (!uri) throw new Error('Missing environment variable: MONGODB_URI');
+
+const g = globalThis;
+let clientPromise;
+
+if (process.env.NODE_ENV === 'development') {
+  if (!g._mongoClientPromise) {
+    g._mongoClientPromise = new MongoClient(uri).connect();
+  }
+  clientPromise = g._mongoClientPromise;
+} else {
+  clientPromise = new MongoClient(uri).connect();
+}
+
+function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };
 }
 
-// Dedicated OPTIONS handler for CORS preflight
+// Route Handlers support OPTIONS for CORS preflight (Next.js, 2025). :contentReference[oaicite:2]{index=2}
 export async function OPTIONS() {
-  const headers = setCORSHeaders();
-  return new NextResponse(null, { status: 204, headers });
+  return new NextResponse(null, { status: 204, headers: corsHeaders() });
 }
 
-// GET handler to fetch categories
-export async function GET(req) {
-  const headers = setCORSHeaders();
+export async function GET() {
+  const headers = corsHeaders();
 
   try {
-    await client.connect();
-    const database = client.db('svgfacetpaintbynumber');
-    const collection = database.collection('categories');
+    const client = await clientPromise;
+    const db = client.db('svgfacetpaintbynumber');
 
-    // Retrieve all categories; adjust projection if you only want specific fields
-    const categories = await collection.find({}, {
-      projection: {
-        _id: 1,
-        name: 1
-      }
-    }).toArray();
+    const categories = await db
+      .collection('categories')
+      .find({}, { projection: { _id: 1, name: 1 } })
+      .toArray();
 
-    // You can wrap the categories in an object for consistency
-    // e.g. { data: categories }
-    return NextResponse.json({ categories: categories }, { headers });
-  } finally {
-    // Close DB connection
-    await client.close();
+    return NextResponse.json({ categories }, { headers });
+  } catch (err) {
+    console.error('GET /api/categories failed:', err);
+    return NextResponse.json({ error: 'Failed to fetch categories' }, { status: 500, headers });
   }
 }
