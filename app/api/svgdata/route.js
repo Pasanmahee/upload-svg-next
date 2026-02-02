@@ -5,8 +5,78 @@ import { join } from 'path';
 import { Storage } from '@google-cloud/storage';
 import sharp from 'sharp';
 
-const uri = process.env.NEXT_PUBLIC_MONGODB_URI;
-const client = new MongoClient(uri);
+const mongoUri = process.env.MONGODB_URI || process.env.NEXT_PUBLIC_MONGODB_URI;
+if (!mongoUri) throw new Error('Missing environment variable: MONGODB_URI');
+const client = new MongoClient(mongoUri);
+
+// -----------------------------
+// Google Cloud Storage (server-only)
+// -----------------------------
+const bucketName = process.env.GCS_BUCKET;
+const saKeyB64 = process.env.GCP_SA_KEY_B64;
+if (!bucketName) throw new Error('Missing environment variable: GCS_BUCKET');
+if (!saKeyB64) throw new Error('Missing environment variable: GCP_SA_KEY_B64');
+
+let gcpCredentials;
+try {
+  const json = Buffer.from(saKeyB64, 'base64').toString('utf8');
+  gcpCredentials = JSON.parse(json);
+} catch {
+  throw new Error('Invalid GCP_SA_KEY_B64: expected base64-encoded service account JSON');
+}
+
+const storage = new Storage({
+  projectId: gcpCredentials.project_id,
+  credentials: gcpCredentials,
+});
+
+const SIGNED_URL_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+function parseGcsObjectRef(value) {
+  if (!value || typeof value !== 'string') return null;
+
+  if (value.startsWith('gs://')) {
+    const rest = value.slice('gs://'.length);
+    const firstSlash = rest.indexOf('/');
+    if (firstSlash === -1) return null;
+    const bucket = rest.slice(0, firstSlash);
+    const objectPath = rest.slice(firstSlash + 1);
+    if (!bucket || !objectPath) return null;
+    return { bucket, objectPath };
+  }
+
+  const httpsPrefix = 'https://storage.googleapis.com/';
+  if (value.startsWith(httpsPrefix)) {
+    const rest = value.slice(httpsPrefix.length);
+    const firstSlash = rest.indexOf('/');
+    if (firstSlash === -1) return null;
+    const bucket = rest.slice(0, firstSlash);
+    const objectPath = rest.slice(firstSlash + 1);
+    if (!bucket || !objectPath) return null;
+    return { bucket, objectPath };
+  }
+
+  // treat as object path in default bucket
+  const objectPath = value.replace(/^\/+/,'');
+  if (!objectPath) return null;
+  return { bucket: bucketName, objectPath };
+}
+
+async function signReadUrl(maybeUrlOrPath) {
+  const target = parseGcsObjectRef(maybeUrlOrPath);
+  if (!target) return maybeUrlOrPath;
+
+  const [signedUrl] = await storage
+    .bucket(target.bucket)
+    .file(target.objectPath)
+    .getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires: Date.now() + SIGNED_URL_TTL_MS,
+    });
+
+  return signedUrl;
+}
 
 function setCORSHeaders() {
   return {
@@ -79,10 +149,6 @@ export async function POST(req) {
 
   // Save the modified SVG file to the server
   await fs.writeFile(filePath, modifiedBuffer);
-
-  // Google Cloud Storage setup
-  const bucketName = 'svg-image-processing-bucket'; // Replace with your actual bucket name
-  const storage = new Storage();
 
   // Generate a random number for unique file naming
   const randomNumber = Math.floor(Math.random() * 1_000_000);
@@ -231,7 +297,8 @@ export async function GET(req) {
     }
 
     // Fetch the raw SVG data from the public URL
-    const response = await fetch(data.svgData);
+        const signedSvgUrl = await signReadUrl(data.svgData);
+    const response = await fetch(signedSvgUrl);
     if (!response.ok) {
       return NextResponse.json({ message: 'Failed to fetch SVG data' }, { status: 500, headers });
     }
@@ -245,7 +312,7 @@ export async function GET(req) {
       categories: data.categories,
       date: data.date,
       svgData: rawSvgData,
-      pngData: data.pngData,
+      pngData: data.pngData ? await signReadUrl(data.pngData) : data.pngData,
     };
 
     return NextResponse.json(responseData, { headers });

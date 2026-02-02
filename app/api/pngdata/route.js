@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { MongoClient } from 'mongodb';
+import { MongoClient, ObjectId } from 'mongodb';
 import { Storage } from '@google-cloud/storage';
 
 export const runtime = 'nodejs';
@@ -7,8 +7,7 @@ export const runtime = 'nodejs';
 // -----------------------------
 // Env (server-only)
 // -----------------------------
-// Prefer MONGODB_URI; keep NEXT_PUBLIC_MONGODB_URI only as a temporary fallback.
-const mongoUri = process.env.MONGODB_URI || process.env.NEXT_PUBLIC_MONGODB_URI;
+const mongoUri = process.env.MONGODB_URI || process.env.NEXT_PUBLIC_MONGODB_URI; // keep fallback if you still use it
 const defaultBucketName = process.env.GCS_BUCKET;
 const saKeyB64 = process.env.GCP_SA_KEY_B64;
 
@@ -49,7 +48,7 @@ const storage = new Storage({
   credentials: gcpCredentials,
 });
 
-// 15 minutes (change if needed; V4 max is 7 days) (Google Cloud, n.d.). :contentReference[oaicite:2]{index=2}
+// 15 minutes (adjust if needed; V4 max is 7 days) (Google Cloud, n.d.). :contentReference[oaicite:1]{index=1}
 const SIGNED_URL_TTL_MS = 15 * 60 * 1000;
 
 function setCORSHeaders() {
@@ -100,7 +99,6 @@ async function signReadUrl(maybeUrlOrPath) {
   const target = parseGcsObjectRef(maybeUrlOrPath);
   if (!target) return maybeUrlOrPath;
 
-  // V4 GET signed URL (Google’s official sample pattern) (Google Cloud, n.d.). :contentReference[oaicite:3]{index=3}
   const [signedUrl] = await storage
     .bucket(target.bucket)
     .file(target.objectPath)
@@ -121,75 +119,100 @@ export async function OPTIONS() {
 
 export async function GET(req) {
   const headers = setCORSHeaders();
-  const { searchParams } = new URL(req.url);
 
-  const page = parseInt(searchParams.get('page') || '1', 10);
-  const limit = parseInt(searchParams.get('limit') || '10', 10);
-  const categoryId = searchParams.get('categoryId');
+  try {
+    const { searchParams } = new URL(req.url);
 
-  // deviceRam: if missing or "unknown", default to 2GB.
-  const deviceRamParam = searchParams.get('deviceRam');
-  let deviceRam;
-  if (!deviceRamParam || deviceRamParam.toLowerCase() === 'unknown') {
-    deviceRam = 2;
-  } else {
-    deviceRam = Number.parseFloat(deviceRamParam);
+    // Pagination
+    const pageRaw = parseInt(searchParams.get('page') || '1', 10);
+    const limitRaw = parseInt(searchParams.get('limit') || '10', 10);
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+
+    // keep sane bounds
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 10;
+    const skip = (page - 1) * limit;
+
+    // Filters
+    const categoryId = searchParams.get('categoryId');
+
+    // IMPORTANT FIX:
+    // - If deviceRam is missing or "unknown" or non-numeric -> do NOT apply complexity filter.
+    // - Only apply hasSimplifiedSvg=true when deviceRam is a valid number and below threshold.
+    const deviceRamParam = searchParams.get('deviceRam');
+    const deviceRam =
+      deviceRamParam && typeof deviceRamParam === 'string' && deviceRamParam.toLowerCase() !== 'unknown'
+        ? Number.parseFloat(deviceRamParam)
+        : Number.NaN;
+
+    const threshold = 5;
+    const hasValidRam = Number.isFinite(deviceRam);
+    const isLowComplexity = hasValidRam && deviceRam < threshold;
+
+    const client = await clientPromise;
+    const database = client.db('svgfacetpaintbynumber');
+    const collection = database.collection('svgdata');
+
+    // Build query
+    const query = {};
+
+    if (categoryId) {
+      // Match both string and ObjectId stored forms (MongoDB, n.d.). :contentReference[oaicite:2]{index=2}
+      // ObjectId.isValid docs: (MongoDB Node driver, n.d.). :contentReference[oaicite:3]{index=3}
+      const values = [categoryId];
+      if (ObjectId.isValid(categoryId)) values.push(new ObjectId(categoryId));
+      query.categories = { $in: values };
+    }
+
+    // Apply only when low-RAM is CONFIRMED
+    if (isLowComplexity) {
+      query.hasSimplifiedSvg = true;
+    }
+    // If high RAM or unknown RAM: no hasSimplifiedSvg filter (return all images)
+
+    const projection = {
+      _id: 1,
+      categories: 1,
+      date: 1,
+      pngData: 1,
+      hasSimplifiedSvg: 1,
+    };
+
+    const data = await collection
+      .find(query, { projection })
+      .sort({ date: -1, _id: -1 })
+      .skip(skip)
+      .limit(limit)
+      .toArray();
+
+    // Replace pngData with signed URL (bucket stays private)
+    const signedData = await Promise.all(
+      data.map(async (doc) => {
+        if (!doc?.pngData) return doc;
+        try {
+          const pngData = await signReadUrl(doc.pngData);
+          return { ...doc, pngData };
+        } catch (err) {
+          // If signing fails, return original value (helps debugging)
+          console.error('Failed to sign pngData', { pngData: doc.pngData, err });
+          return doc;
+        }
+      })
+    );
+
+    const total = await collection.countDocuments(query);
+    const totalPages = Math.ceil(total / limit);
+
+    return NextResponse.json(
+      {
+        data: signedData,
+        page,
+        totalPages,
+        total,
+      },
+      { headers }
+    );
+  } catch (err) {
+    console.error('pngdata GET error:', err);
+    return NextResponse.json({ error: 'Failed to fetch png data' }, { status: 500, headers });
   }
-
-  const threshold = 5;
-  const isLowComplexity = deviceRam < threshold;
-
-  const skip = (page - 1) * limit;
-
-  const client = await clientPromise;
-  const database = client.db('svgfacetpaintbynumber');
-  const collection = database.collection('svgdata');
-
-  // Build query
-  const query = {};
-  if (categoryId) query.categories = categoryId;
-
-  // Preserve your existing logic
-  query.hasSimplifiedSvg = isLowComplexity ? true : false;
-
-  const projection = {
-    _id: 1,
-    categories: 1,
-    date: 1,
-    pngData: 1,
-  };
-
-  const data = await collection
-    .find(query, { projection })
-    .skip(skip)
-    .limit(limit)
-    .toArray();
-
-  // Replace pngData with a signed URL (bucket stays private)
-  const signedData = await Promise.all(
-    data.map(async (doc) => {
-      if (!doc?.pngData) return doc;
-      try {
-        const pngData = await signReadUrl(doc.pngData);
-        return { ...doc, pngData };
-      } catch (err) {
-        // If signing fails, return original value (helps debugging)
-        console.error('Failed to sign pngData', { pngData: doc.pngData, err });
-        return doc;
-      }
-    })
-  );
-
-  const total = await collection.countDocuments(query);
-  const totalPages = Math.ceil(total / limit);
-
-  return NextResponse.json(
-    {
-      data: signedData,
-      page,
-      totalPages,
-      total,
-    },
-    { headers }
-  );
 }
