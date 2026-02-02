@@ -252,6 +252,8 @@ export async function POST(req) {
       colors,
       categories: selectedCategories,
       hasSimplifiedSvg,          // <<--- Store the boolean value
+      createdAt: new Date(),
+      updatedAt: new Date(),
       date: new Date().toISOString(),
     });
 

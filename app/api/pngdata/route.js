@@ -15,6 +15,13 @@ if (!mongoUri) throw new Error('Missing environment variable: MONGODB_URI');
 if (!defaultBucketName) throw new Error('Missing environment variable: GCS_BUCKET');
 if (!saKeyB64) throw new Error('Missing environment variable: GCP_SA_KEY_B64');
 
+// Virtual categories (do NOT store in DB)
+const VIRTUAL_CATEGORY_ALL_ID = 'all';
+const VIRTUAL_CATEGORY_NEW_ID = 'new';
+
+// "New" means last N days
+const NEW_WINDOW_DAYS = Number.parseInt(process.env.NEW_WINDOW_DAYS || '30', 10) || 30;
+
 // -----------------------------
 // Mongo (reuse connection)
 // -----------------------------
@@ -48,7 +55,7 @@ const storage = new Storage({
   credentials: gcpCredentials,
 });
 
-// 15 minutes (adjust if needed; V4 max is 7 days) (Google Cloud, n.d.). :contentReference[oaicite:1]{index=1}
+// 15 minutes (adjust if needed; V4 max is 7 days)
 const SIGNED_URL_TTL_MS = 15 * 60 * 1000;
 
 function setCORSHeaders() {
@@ -68,8 +75,11 @@ function setCORSHeaders() {
 function parseGcsObjectRef(value) {
   if (!value || typeof value !== 'string') return null;
 
-  if (value.startsWith('gs://')) {
-    const rest = value.slice('gs://'.length);
+  // Strip query string if it exists (signed URL stored by mistake)
+  const noQuery = value.split('?')[0];
+
+  if (noQuery.startsWith('gs://')) {
+    const rest = noQuery.slice('gs://'.length);
     const firstSlash = rest.indexOf('/');
     if (firstSlash === -1) return null;
     const bucket = rest.slice(0, firstSlash);
@@ -79,8 +89,8 @@ function parseGcsObjectRef(value) {
   }
 
   const httpsPrefix = 'https://storage.googleapis.com/';
-  if (value.startsWith(httpsPrefix)) {
-    const rest = value.slice(httpsPrefix.length);
+  if (noQuery.startsWith(httpsPrefix)) {
+    const rest = noQuery.slice(httpsPrefix.length);
     const firstSlash = rest.indexOf('/');
     if (firstSlash === -1) return null;
     const bucket = rest.slice(0, firstSlash);
@@ -90,7 +100,7 @@ function parseGcsObjectRef(value) {
   }
 
   // Treat as object path
-  const objectPath = value.replace(/^\/+/, '');
+  const objectPath = noQuery.replace(/^\/+/, '');
   if (!objectPath) return null;
   return { bucket: defaultBucketName, objectPath };
 }
@@ -135,7 +145,7 @@ export async function GET(req) {
     // Filters
     const categoryId = searchParams.get('categoryId');
 
-    // IMPORTANT FIX:
+    // IMPORTANT:
     // - If deviceRam is missing or "unknown" or non-numeric -> do NOT apply complexity filter.
     // - Only apply hasSimplifiedSvg=true when deviceRam is a valid number and below threshold.
     const deviceRamParam = searchParams.get('deviceRam');
@@ -155,23 +165,42 @@ export async function GET(req) {
     // Build query
     const query = {};
 
-    if (categoryId) {
-      // Match both string and ObjectId stored forms (MongoDB, n.d.). :contentReference[oaicite:2]{index=2}
-      // ObjectId.isValid docs: (MongoDB Node driver, n.d.). :contentReference[oaicite:3]{index=3}
-      const values = [categoryId];
-      if (ObjectId.isValid(categoryId)) values.push(new ObjectId(categoryId));
-      query.categories = { $in: values };
+    // Virtual category handling
+    if (categoryId && categoryId !== VIRTUAL_CATEGORY_ALL_ID) {
+      if (categoryId === VIRTUAL_CATEGORY_NEW_ID) {
+        // New = last NEW_WINDOW_DAYS days
+        const since = new Date(Date.now() - NEW_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+        const sinceISO = since.toISOString();
+
+        // Support both styles:
+        // - createdAt: Date
+        // - date: ISO string (legacy)
+        query.$or = [
+          { createdAt: { $gte: since } },
+          { date: { $gte: sinceISO } },
+        ];
+      } else {
+        // Real category match (robust against string/ObjectId/embedded categories)
+        const values = [categoryId];
+        if (ObjectId.isValid(categoryId)) values.push(new ObjectId(categoryId));
+
+        query.$or = [
+          { categories: { $in: values } },
+          { 'categories._id': { $in: values } },
+        ];
+      }
     }
 
     // Apply only when low-RAM is CONFIRMED
     if (isLowComplexity) {
       query.hasSimplifiedSvg = true;
     }
-    // If high RAM or unknown RAM: no hasSimplifiedSvg filter (return all images)
 
     const projection = {
       _id: 1,
       categories: 1,
+      createdAt: 1,
+      updatedAt: 1,
       date: 1,
       pngData: 1,
       hasSimplifiedSvg: 1,
@@ -179,7 +208,7 @@ export async function GET(req) {
 
     const data = await collection
       .find(query, { projection })
-      .sort({ date: -1, _id: -1 })
+      .sort({ createdAt: -1, date: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
       .toArray();
@@ -192,7 +221,6 @@ export async function GET(req) {
           const pngData = await signReadUrl(doc.pngData);
           return { ...doc, pngData };
         } catch (err) {
-          // If signing fails, return original value (helps debugging)
           console.error('Failed to sign pngData', { pngData: doc.pngData, err });
           return doc;
         }
@@ -202,12 +230,28 @@ export async function GET(req) {
     const total = await collection.countDocuments(query);
     const totalPages = Math.ceil(total / limit);
 
+    const debug = searchParams.get('debug') === '1' && process.env.NODE_ENV === 'development'
+      ? {
+          query,
+          page,
+          limit,
+          isLowComplexity,
+          hasValidRam,
+          deviceRamParam,
+          categoryId,
+          NEW_WINDOW_DAYS,
+          matched: signedData.length,
+          total,
+        }
+      : undefined;
+
     return NextResponse.json(
       {
         data: signedData,
         page,
         totalPages,
         total,
+        ...(debug ? { debug } : {}),
       },
       { headers }
     );
