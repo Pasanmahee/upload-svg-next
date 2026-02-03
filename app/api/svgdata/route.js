@@ -10,6 +10,37 @@ if (!mongoUri) throw new Error('Missing environment variable: MONGODB_URI');
 const client = new MongoClient(mongoUri);
 
 // -----------------------------
+// Thumbnail SVG sanitizer (outline-only, hide numbers)
+// Only used for PNG thumbnail rendering (does not affect the stored SVG unless you choose to apply it).
+// -----------------------------
+function buildThumbnailSvg(svgString, strokeColor = '#000000') {
+  let s = svgString || '';
+
+  // Remove label groups (numbers) and any remaining <text> elements
+  s = s.replace(/<g\b[^>]*\bclass\s*=\s*["'][^"']*\blabel\b[^"']*["'][\s\S]*?<\/g>/gi, '');
+  s = s.replace(/<text\b[^>]*>[\s\S]*?<\/text>/gi, '');
+
+  const styleBlock = `
+<style><![CDATA[
+  path, polygon, polyline, rect, circle, ellipse, line {
+    fill: none !important;
+    stroke: ${strokeColor} !important;
+  }
+  g.label, text { display: none !important; }
+]]></style>`;
+
+  if (/<svg\b[^>]*>/i.test(s)) {
+    // Inject style right after the opening <svg ...> tag
+    s = s.replace(/<svg\b([^>]*)>/i, (m, attrs) => `<svg${attrs}>${styleBlock}`);
+  } else {
+    // Fallback wrapper if content isn't a full SVG document
+    s = `<svg xmlns="http://www.w3.org/2000/svg">${styleBlock}${s}</svg>`;
+  }
+
+  return s;
+}
+
+// -----------------------------
 // Google Cloud Storage (server-only)
 // -----------------------------
 const bucketName = process.env.GCS_BUCKET;
@@ -219,13 +250,17 @@ export async function POST(req) {
       [imageFileExtension]({ quality: 80 }) // If .jpeg, use jpeg() with { quality: 80 }
         .toBuffer();
     } else {
-      // Generate a PNG from the modified SVG
-      const { width, height } = await sharp(modifiedBuffer).metadata();
+      // Generate an outline-only PNG thumbnail from the SVG (no fills, no numbers)
+      const thumbnailSvgData = buildThumbnailSvg(modifiedSvgData, strokeColor);
+      const thumbnailBuffer = Buffer.from(thumbnailSvgData, 'utf8');
+
+      const { width, height } = await sharp(thumbnailBuffer).metadata();
       const reducedWidth = Math.floor(width * 0.9);
       const reducedHeight = Math.floor(height * 0.9);
 
-      resizedImageBuffer = await sharp(modifiedBuffer)
+      resizedImageBuffer = await sharp(thumbnailBuffer)
         .resize(reducedWidth, reducedHeight)
+        .flatten({ background: '#ffffff' })
         .png({ compressionLevel: 9, quality: 80 })
         .toBuffer();
     }
