@@ -143,7 +143,16 @@ export async function GET(req) {
     const skip = (page - 1) * limit;
 
     // Filters
-    const categoryId = searchParams.get('categoryId');
+    const categoryIdRaw = searchParams.get('categoryId');
+    // Normalize virtual categories regardless of casing
+    const categoryId =
+      typeof categoryIdRaw === 'string' && categoryIdRaw
+        ? (categoryIdRaw.toLowerCase() === VIRTUAL_CATEGORY_ALL_ID
+            ? VIRTUAL_CATEGORY_ALL_ID
+            : categoryIdRaw.toLowerCase() === VIRTUAL_CATEGORY_NEW_ID
+              ? VIRTUAL_CATEGORY_NEW_ID
+              : categoryIdRaw)
+        : null;
 
     // IMPORTANT:
     // - If deviceRam is missing or "unknown" or non-numeric -> do NOT apply complexity filter.
@@ -163,7 +172,7 @@ export async function GET(req) {
     const collection = database.collection('svgdata');
 
     // Build query
-    const query = {};
+    const baseQuery = {};
 
     // Virtual category handling
     if (categoryId && categoryId !== VIRTUAL_CATEGORY_ALL_ID) {
@@ -175,7 +184,7 @@ export async function GET(req) {
         // Support both styles:
         // - createdAt: Date
         // - date: ISO string (legacy)
-        query.$or = [
+        baseQuery.$or = [
           { createdAt: { $gte: since } },
           { date: { $gte: sinceISO } },
         ];
@@ -184,16 +193,20 @@ export async function GET(req) {
         const values = [categoryId];
         if (ObjectId.isValid(categoryId)) values.push(new ObjectId(categoryId));
 
-        query.$or = [
+        baseQuery.$or = [
           { categories: { $in: values } },
           { 'categories._id': { $in: values } },
         ];
       }
     }
-
-    // Apply only when low-RAM is CONFIRMED
+    // Prefer simplified SVGs on low-RAM devices, but fall back if none exist.
+    const queryBase = baseQuery;
+    let query = queryBase;
+    let usedSimplifiedFilter = false;
+    let fellBackToFull = false;
     if (isLowComplexity) {
-      query.hasSimplifiedSvg = true;
+      query = { ...queryBase, hasSimplifiedSvg: true };
+      usedSimplifiedFilter = true;
     }
 
     const projection = {
@@ -206,12 +219,24 @@ export async function GET(req) {
       hasSimplifiedSvg: 1,
     };
 
-    const data = await collection
+    let data = await collection
       .find(query, { projection })
       .sort({ createdAt: -1, date: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
       .toArray();
+
+    // If the simplified filter yields no results, fall back to the full set.
+    if (usedSimplifiedFilter && (!data || data.length === 0)) {
+      query = queryBase;
+      fellBackToFull = true;
+      data = await collection
+        .find(query, { projection })
+        .sort({ createdAt: -1, date: -1, _id: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray();
+    }
 
     // Replace pngData with signed URL (bucket stays private)
     const signedData = await Promise.all(
@@ -236,6 +261,8 @@ export async function GET(req) {
           page,
           limit,
           isLowComplexity,
+          usedSimplifiedFilter,
+          fellBackToFull,
           hasValidRam,
           deviceRamParam,
           categoryId,
