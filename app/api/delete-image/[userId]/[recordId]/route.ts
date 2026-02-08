@@ -1,0 +1,89 @@
+import { ObjectId } from 'mongodb';
+import { logger } from '@/lib/logger';
+import { getMongoClient, getDbName } from '@/lib/mongo';
+import { getBucketName, getStorage } from '@/lib/gcs';
+
+export const runtime = 'nodejs';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: corsHeaders });
+}
+
+function json(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+function pathFromGcsUrl(url: string, bucketName: string): string | null {
+  const prefix = `https://storage.googleapis.com/${bucketName}/`;
+  if (!url.startsWith(prefix)) return null;
+  return url.slice(prefix.length);
+}
+
+export async function DELETE(_request: Request, ctx: { params: { userId: string; recordId: string } }) {
+  const userId = decodeURIComponent(ctx.params.userId);
+  const recordId = ctx.params.recordId;
+
+  try {
+    if (!ObjectId.isValid(recordId)) {
+      return json({ error: 'Invalid record ID.' }, 400);
+    }
+
+    const client = await getMongoClient();
+    const db = client.db(getDbName());
+    const svgDataCollection = db.collection('svgdata');
+
+    const _id = new ObjectId(recordId);
+    const record = await svgDataCollection.findOne({ _id });
+
+    if (!record) {
+      return json({ error: 'Record not found.' }, 404);
+    }
+
+    // Best-effort delete files from GCS (if URLs match the expected bucket)
+    const bucketName = getBucketName();
+    const storage = getStorage();
+    const bucket = storage.bucket(bucketName);
+
+    const svgUrl: string | undefined = record.svgData;
+    const pngUrl: string | undefined = record.pngData;
+
+    const toDelete: string[] = [];
+    if (typeof svgUrl === 'string') {
+      const p = pathFromGcsUrl(svgUrl, bucketName);
+      if (p) toDelete.push(p);
+    }
+    if (typeof pngUrl === 'string') {
+      const p = pathFromGcsUrl(pngUrl, bucketName);
+      if (p) toDelete.push(p);
+    }
+
+    for (const p of toDelete) {
+      try {
+        await bucket.file(p).delete();
+      } catch (e: any) {
+        // ignore missing files / permissions; record deletion should still proceed
+        logger.error('Failed deleting GCS file', { userId, recordId, path: p, error: e?.message || e });
+      }
+    }
+
+    const delRes = await svgDataCollection.deleteOne({ _id });
+    if (!delRes.deletedCount) {
+      return json({ error: 'Record could not be deleted.' }, 404);
+    }
+
+    logger.log('Deleted record', { userId, recordId });
+    return json({ message: 'Record deleted successfully.' });
+  } catch (e: any) {
+    logger.error('Error deleting record', { userId, recordId, error: e?.message || e });
+    return json({ error: 'An error occurred while deleting the record.' }, 500);
+  }
+}

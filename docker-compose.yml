@@ -4,4 +4,9 @@ services:
     ports:
       - '8080:8080'
     environment:
-      NEXT_PUBLIC_MONGODB_URI: mongodb+srv://pasanmahee:fVgPys0uknMCuT8S@cluster0.zwasfmo.mongodb.net/svgfacetpaintbynumber?retryWrites=true&w=majority
+      # Server-only env vars (do NOT use NEXT_PUBLIC_ for secrets)
+      MONGODB_URI: ${MONGODB_URI}
+      DB_NAME: ${DB_NAME:-svgfacetpaintbynumber}
+      GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-svg-image-processing-bucket}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
+      MAX_RECORDS_PER_USER: ${MAX_RECORDS_PER_USER:-3}
