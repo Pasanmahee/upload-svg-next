@@ -15,10 +15,10 @@ export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders });
 }
 
-function json(data: any, status = 200) {
+function json(data: any, status = 200, extraHeaders: Record<string, string> = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    headers: { 'Content-Type': 'application/json', ...corsHeaders, ...extraHeaders },
   });
 }
 
@@ -33,6 +33,23 @@ export async function DELETE(
   _request: Request,
   ctx: { params: Promise<{ userId: string; recordId: string }> },
 ) {
+  // ✅ Hard-disable via env flag
+  const disabled =
+    process.env.DISABLE_DELETE_IMAGE_API === '1' ||
+    process.env.DISABLE_DELETE_IMAGE_API?.toLowerCase() === 'true';
+
+  if (disabled) {
+    // 503 + Retry-After is appropriate for temporary disable (MDN, 2025).
+    return json(
+      { error: 'Delete API is temporarily disabled.' },
+      503,
+      {
+        'Retry-After': '3600',
+        'Cache-Control': 'no-store',
+      }
+    );
+  }
+
   const { userId: rawUserId, recordId } = await ctx.params;
   const userId = decodeURIComponent(rawUserId);
 
@@ -57,8 +74,8 @@ export async function DELETE(
     const storage = getStorage();
     const bucket = storage.bucket(bucketName);
 
-    const svgUrl: string | undefined = record.svgData;
-    const pngUrl: string | undefined = record.pngData;
+    const svgUrl: string | undefined = (record as any).svgData;
+    const pngUrl: string | undefined = (record as any).pngData;
 
     const toDelete: string[] = [];
     if (typeof svgUrl === 'string') {
