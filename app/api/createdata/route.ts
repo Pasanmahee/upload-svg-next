@@ -1,7 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
+import { getBucketName, getStorage } from '@/lib/gcs';
 
-function setCORSHeaders() {
+export const runtime = 'nodejs';
+
+// Signed URLs are temporary.
+const SIGNED_URL_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+type GcsRef = { bucket: string; objectPath: string };
+
+function setCORSHeaders(): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -9,13 +17,82 @@ function setCORSHeaders() {
   };
 }
 
-function getErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'string') return err;
+function getErrorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
   try {
-    return JSON.stringify(err);
+    return JSON.stringify(e);
   } catch {
-    return 'Unknown error';
+    return 'Failed to load data';
+  }
+}
+
+/**
+ * Accepts:
+ *  - https://storage.googleapis.com/<bucket>/<object>[?query]
+ *  - gs://<bucket>/<object>
+ *  - <objectPath> (assumes default bucket)
+ */
+function parseGcsObjectRef(value: unknown): GcsRef | null {
+  if (typeof value !== 'string' || !value) return null;
+
+  // Don’t attempt to sign inline data URLs
+  if (value.startsWith('data:')) return null;
+
+  // Strip querystring (works for already-signed URLs too)
+  const noQuery = value.split('?')[0];
+
+  if (noQuery.startsWith('gs://')) {
+    const rest = noQuery.slice('gs://'.length);
+    const firstSlash = rest.indexOf('/');
+    if (firstSlash === -1) return null;
+
+    const bucket = rest.slice(0, firstSlash);
+    const objectPath = rest.slice(firstSlash + 1);
+    if (!bucket || !objectPath) return null;
+
+    return { bucket, objectPath };
+  }
+
+  const httpsPrefix = 'https://storage.googleapis.com/';
+  if (noQuery.startsWith(httpsPrefix)) {
+    const rest = noQuery.slice(httpsPrefix.length);
+    const firstSlash = rest.indexOf('/');
+    if (firstSlash === -1) return null;
+
+    const bucket = rest.slice(0, firstSlash);
+    const objectPath = rest.slice(firstSlash + 1);
+    if (!bucket || !objectPath) return null;
+
+    return { bucket, objectPath };
+  }
+
+  // Treat as object path in the default bucket
+  const objectPath = noQuery.replace(/^\/+/, '');
+  if (!objectPath) return null;
+
+  return { bucket: getBucketName(), objectPath };
+}
+
+async function signReadUrl(maybeUrlOrPath: unknown): Promise<unknown> {
+  const ref = parseGcsObjectRef(maybeUrlOrPath);
+  if (!ref) return maybeUrlOrPath;
+
+  try {
+    const storage = getStorage();
+    const [signedUrl] = await storage
+      .bucket(ref.bucket)
+      .file(ref.objectPath)
+      .getSignedUrl({
+        version: 'v4',
+        action: 'read',
+        expires: Date.now() + SIGNED_URL_TTL_MS,
+      });
+
+    return signedUrl;
+  } catch {
+    // If signing fails (e.g., no credentials), fall back to original value.
+    return maybeUrlOrPath;
   }
 }
 
@@ -24,21 +101,24 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers });
 }
 
-// In Route Handlers, use the Web Request API type:
-export async function GET(req: Request) {
+export async function GET(request: Request) {
   const headers = setCORSHeaders();
-  const { searchParams } = new URL(req.url);
-
-  const page = Number.parseInt(searchParams.get('page') ?? '1', 10);
-  const limit = Number.parseInt(searchParams.get('limit') ?? '10', 10);
-  const userId = searchParams.get('userId');
-  const skip = (page - 1) * limit;
-
-  if (!userId) {
-    return NextResponse.json({ error: 'userId is required' }, { status: 400, headers });
-  }
 
   try {
+    const { searchParams } = new URL(request.url);
+
+    const pageRaw = Number.parseInt(searchParams.get('page') || '1', 10);
+    const limitRaw = Number.parseInt(searchParams.get('limit') || '10', 10);
+
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 10;
+    const skip = (page - 1) * limit;
+
+    const userId = searchParams.get('userId');
+    if (!userId) {
+      return NextResponse.json({ error: 'userId is required' }, { status: 400, headers });
+    }
+
     const client = await getMongoClient();
     const database = client.db(getDbName());
     const collection = database.collection('svgdata');
@@ -47,20 +127,29 @@ export async function GET(req: Request) {
 
     const data = await collection
       .find(query, {
-        projection: { _id: 1, userId: 1, pngData: 1, date: 1 },
+        projection: { _id: 1, userId: 1, pngData: 1, date: 1, createdAt: 1 },
       })
+      .sort({ createdAt: -1, date: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
       .toArray();
 
+    const signedData = await Promise.all(
+      (data || []).map(async (doc: any) => {
+        if (!doc?.pngData) return doc;
+        const pngData = await signReadUrl(doc.pngData);
+        return { ...doc, pngData };
+      }),
+    );
+
     const total = await collection.countDocuments(query);
     const totalPages = Math.ceil(total / limit);
 
-    return NextResponse.json({ data, page, totalPages, total }, { headers });
+    return NextResponse.json({ data: signedData, page, totalPages, total }, { headers });
   } catch (e: unknown) {
     return NextResponse.json(
-      { error: getErrorMessage(e) || 'Failed to load data' },
-      { status: 500, headers }
+      { error: getErrorMessage(e) },
+      { status: 500, headers },
     );
   }
 }
