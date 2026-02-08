@@ -18,8 +18,10 @@ Copy `.env.example` to `.env.local` and fill:
 
 - `MONGODB_URI` (required if you want persistence)
 - `DB_NAME` (optional)
-- `GCS_BUCKET_NAME` (recommended)
-- `GOOGLE_APPLICATION_CREDENTIALS` (recommended; path to service-account JSON)
+- `GCS_BUCKET_NAME` (recommended; back-compat: `GCS_BUCKET`)
+- Credentials (choose ONE):
+  - `GOOGLE_APPLICATION_CREDENTIALS` (path to service-account JSON)
+  - `GCP_SA_KEY_B64` (base64-encoded service-account JSON)
 - `DISABLE_GCS=1` to return inline `data:` URLs instead of uploading files
 
 ## Run locally
@@ -30,6 +32,11 @@ npm run dev
 ```
 
 Open `http://localhost:3000`.
+
+## Notes
+
+- On Next.js 15+ / 16, dynamic route `params` are Promises; route handlers unwrap them with `await`.
+- If you see "Duplicate page/route detected", delete the extra `page.*` or `route.*` file so only one exists per route.
 
 ## Docker
 

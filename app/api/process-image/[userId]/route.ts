@@ -32,8 +32,11 @@ function json(data: any, status = 200) {
 
 type ImageDataLike = { width: number; height: number; data: Uint8ClampedArray };
 
-export async function POST(request: Request, ctx: { params: { userId: string } }) {
-  const userId = decodeURIComponent(ctx.params.userId);
+// Next.js 15+ passes params as a Promise ("Dynamic APIs are Asynchronous").
+// Unwrap with await before reading properties.
+export async function POST(request: Request, ctx: { params: Promise<{ userId: string }> }) {
+  const { userId: rawUserId } = await ctx.params;
+  const userId = decodeURIComponent(rawUserId);
 
   try {
     const form = await request.formData();

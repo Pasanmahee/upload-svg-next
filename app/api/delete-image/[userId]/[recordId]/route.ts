@@ -28,9 +28,13 @@ function pathFromGcsUrl(url: string, bucketName: string): string | null {
   return url.slice(prefix.length);
 }
 
-export async function DELETE(_request: Request, ctx: { params: { userId: string; recordId: string } }) {
-  const userId = decodeURIComponent(ctx.params.userId);
-  const recordId = ctx.params.recordId;
+// Next.js 15+ passes params as a Promise ("Dynamic APIs are Asynchronous").
+export async function DELETE(
+  _request: Request,
+  ctx: { params: Promise<{ userId: string; recordId: string }> },
+) {
+  const { userId: rawUserId, recordId } = await ctx.params;
+  const userId = decodeURIComponent(rawUserId);
 
   try {
     if (!ObjectId.isValid(recordId)) {
