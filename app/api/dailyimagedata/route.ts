@@ -1,93 +1,101 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
-import { MongoClient } from 'mongodb';
+import { getMongoClient, getDbName } from '@/lib/mongo';
 
-const uri = process.env.NEXT_PUBLIC_MONGODB_URI;
-const client = new MongoClient(uri as string);
+export const runtime = 'nodejs';
 
-function setCORSHeaders() {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-}
+const corsHeaders: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
 
-// Dedicated OPTIONS handler for CORS preflight
-export async function OPTIONS() {
-  const headers = setCORSHeaders();
-  return new NextResponse(null, { status: 204, headers });
-}
-
-export async function GET(req: { method: string; url: string | URL; }) {
-  const headers = setCORSHeaders();
-
-  // Handle CORS preflight if needed
-  if (req.method === 'OPTIONS') {
-    return NextResponse.json({}, { status: 200, headers });
+function getErrorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return 'Unknown error';
   }
+}
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: corsHeaders });
+}
+
+/**
+ * GET /api/dailyimagedata?page=1&limit=10&deviceRam=4
+ *
+ * NOTE:
+ * - This route must not create DB clients at module scope. Vercel/Next build
+ *   may evaluate the module during "Collecting page data", and missing env vars
+ *   would crash the build.
+ */
+export async function GET(request: Request) {
+  const headers = corsHeaders;
 
   try {
-    // 1. Parse query parameters
-    const { searchParams } = new URL(req.url);
-    const page = parseInt(searchParams.get('page') || '1', 10);
-    const limit = parseInt(searchParams.get('limit') || '10', 10);
+    const { searchParams } = new URL(request.url);
+
+    // Pagination
+    const pageRaw = Number.parseInt(searchParams.get('page') || '1', 10);
+    const limitRaw = Number.parseInt(searchParams.get('limit') || '10', 10);
+
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 10;
     const skip = (page - 1) * limit;
 
-    // 2. Handle deviceRam parameter
+    // Device RAM (optional)
     const deviceRamParam = searchParams.get('deviceRam');
-    let deviceRam = 2; // Default if missing or 'unknown'
-    if (deviceRamParam && deviceRamParam.toLowerCase() !== 'unknown') {
-      deviceRam = parseFloat(deviceRamParam);
-    }
+    const deviceRam =
+      deviceRamParam && deviceRamParam.toLowerCase() !== 'unknown'
+        ? Number.parseFloat(deviceRamParam)
+        : Number.NaN;
 
-    // 3. Decide if we’re dealing with low-complexity (RAM < 4)
+    // Only apply "simplified" filter if RAM is a valid number and below threshold.
     const threshold = 5;
-    const isLowComplexity = deviceRam < threshold; // true if RAM < 4
+    const hasValidRam = Number.isFinite(deviceRam);
+    const isLowComplexity = hasValidRam && deviceRam < threshold;
 
-    // 4. Connect to MongoDB
-    await client.connect();
-    const database = client.db('svgfacetpaintbynumber');
-    const collection = database.collection('svgdata');
+    // Connect to MongoDB (via shared helper / cached client)
+    const client = await getMongoClient();
+    const db = client.db(getDbName());
+    const collection = db.collection('svgdata');
 
-    // 5. Build the query:
-    //    - Exclude documents with userId (so userId does NOT exist).
-    //    - Return only hasSimplifiedSvg = true for low-RAM,
-    //      and hasSimplifiedSvg = false for high-RAM devices.
-    const query = {
+    // Daily feed = documents that do NOT have userId (public feed)
+    const query: Record<string, unknown> = {
       userId: { $exists: false },
-      hasSimplifiedSvg: isLowComplexity,
     };
 
-    // 6. Projection: fields you want to return
+    // Prefer simplified SVGs on low-RAM devices if your docs are flagged accordingly
+    if (isLowComplexity) query.hasSimplifiedSvg = true;
+
     const projection = {
       _id: 1,
       pngData: 1,
       date: 1,
+      createdAt: 1,
+      hasSimplifiedSvg: 1,
     };
 
-    // 7. Retrieve data with sorting, pagination, projection
     const data = await collection
       .find(query, { projection })
-      .sort({ date: -1 }) // Most recent first
+      .sort({ createdAt: -1, date: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
       .toArray();
 
-    // 8. Count total matching documents for pagination
     const total = await collection.countDocuments(query);
     const totalPages = Math.ceil(total / limit);
 
-    // 9. Return the response
-    const response = {
-      data,
-      page,
-      totalPages,
-      total,
-    };
-
-    return NextResponse.json(response, { headers });
-  } finally {
-    await client.close();
+    return NextResponse.json(
+      { data, page, totalPages, total },
+      { headers }
+    );
+  } catch (e: unknown) {
+    return NextResponse.json(
+      { error: getErrorMessage(e) },
+      { status: 500, headers }
+    );
   }
 }
