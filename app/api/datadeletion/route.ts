@@ -1,8 +1,9 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
 
 const uri = process.env.NEXT_PUBLIC_MONGODB_URI;
-const client = new MongoClient(uri);
+const client = new MongoClient(uri as string);
 
 function setCORSHeaders() {
   return {
@@ -12,7 +13,7 @@ function setCORSHeaders() {
   };
 }
 
-function isValidEmail(email) {
+function isValidEmail(email: string) {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email);
 }
@@ -23,7 +24,7 @@ export async function OPTIONS() {
   return new NextResponse(null, { headers });
 }
 
-export async function GET(req) {
+export async function GET(req: { url: string | URL; }) {
   const headers = setCORSHeaders();
 
   try {

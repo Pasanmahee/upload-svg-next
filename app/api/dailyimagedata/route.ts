@@ -1,8 +1,9 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
 
 const uri = process.env.NEXT_PUBLIC_MONGODB_URI;
-const client = new MongoClient(uri);
+const client = new MongoClient(uri as string);
 
 function setCORSHeaders() {
   return {
@@ -18,7 +19,7 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers });
 }
 
-export async function GET(req) {
+export async function GET(req: { method: string; url: string | URL; }) {
   const headers = setCORSHeaders();
 
   // Handle CORS preflight if needed

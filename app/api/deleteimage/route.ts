@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
 import { MongoClient, ObjectId } from 'mongodb';
 import { Storage } from '@google-cloud/storage';
@@ -7,19 +8,24 @@ export const runtime = 'nodejs';
 // -----------------------------
 // Env (server-only)
 // -----------------------------
-const mongoUri = process.env.MONGODB_URI || process.env.NEXT_PUBLIC_MONGODB_URI; // keep fallback if you still use it
-const defaultBucketName = process.env.GCS_BUCKET;
-const saKeyB64 = process.env.GCP_SA_KEY_B64;
+function requiredEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing environment variable: ${name}`);
+  return v;
+}
 
+// Keep fallback if you still use it, but prefer MONGODB_URI
+const mongoUri = process.env.MONGODB_URI ?? process.env.NEXT_PUBLIC_MONGODB_URI;
 if (!mongoUri) throw new Error('Missing environment variable: MONGODB_URI');
-if (!defaultBucketName) throw new Error('Missing environment variable: GCS_BUCKET');
-if (!saKeyB64) throw new Error('Missing environment variable: GCP_SA_KEY_B64');
+
+const defaultBucketName = requiredEnv('GCS_BUCKET');
+const saKeyB64 = requiredEnv('GCP_SA_KEY_B64');
 
 // -----------------------------
 // Mongo (reuse connection)
 // -----------------------------
-const globalForMongo = globalThis;
-let clientPromise;
+const globalForMongo = globalThis as unknown as { _mongoClientPromise?: Promise<MongoClient> };
+let clientPromise: Promise<MongoClient>;
 
 if (process.env.NODE_ENV === 'development') {
   if (!globalForMongo._mongoClientPromise) {
@@ -35,17 +41,19 @@ if (process.env.NODE_ENV === 'development') {
 // -----------------------------
 // GCS client (service account from base64 JSON)
 // -----------------------------
-let gcpCredentials;
+type GcpCreds = { project_id?: string; [k: string]: any };
+
+let gcpCredentials: GcpCreds;
 try {
   const json = Buffer.from(saKeyB64, 'base64').toString('utf8');
-  gcpCredentials = JSON.parse(json);
+  gcpCredentials = JSON.parse(json) as GcpCreds;
 } catch {
   throw new Error('Invalid GCP_SA_KEY_B64: expected base64-encoded service account JSON');
 }
 
 const storage = new Storage({
   projectId: gcpCredentials.project_id,
-  credentials: gcpCredentials,
+  credentials: gcpCredentials as any,
 });
 
 // -----------------------------
@@ -59,6 +67,18 @@ function setCORSHeaders() {
   };
 }
 
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return 'Unknown error';
+  }
+}
+
+type GcsRef = { bucket: string; objectPath: string };
+
 /**
  * Accepts:
  *  - https://storage.googleapis.com/<bucket>/<object>[?query]
@@ -66,8 +86,8 @@ function setCORSHeaders() {
  *  - <object> (object path only; assumes default bucket)
  *  - signed GCS URL (same as storage.googleapis.com URL with query)
  */
-function parseGcsObjectRef(value) {
-  if (!value || typeof value !== 'string') return null;
+function parseGcsObjectRef(value: string): GcsRef | null {
+  if (!value) return null;
 
   // Strip querystring (signed URLs)
   const noQuery = value.split('?')[0];
@@ -99,15 +119,29 @@ function parseGcsObjectRef(value) {
   return { bucket: defaultBucketName, objectPath };
 }
 
-async function deleteIfPresent(maybeUrlOrPath) {
-  const ref = parseGcsObjectRef(maybeUrlOrPath);
+type DeleteResult =
+  | { deleted: true; bucket: string; objectPath: string }
+  | { deleted: false; reason: 'no_ref' | 'invalid_input'; bucket?: string; objectPath?: string; error?: string };
+
+async function deleteIfPresent(maybeUrlOrPath: unknown): Promise<DeleteResult> {
+  if (typeof maybeUrlOrPath !== 'string' || !maybeUrlOrPath.trim()) {
+    return { deleted: false, reason: 'invalid_input' };
+  }
+
+  const ref = parseGcsObjectRef(maybeUrlOrPath.trim());
   if (!ref) return { deleted: false, reason: 'no_ref' };
 
   try {
     await storage.bucket(ref.bucket).file(ref.objectPath).delete({ ignoreNotFound: true });
     return { deleted: true, bucket: ref.bucket, objectPath: ref.objectPath };
-  } catch (err) {
-    return { deleted: false, bucket: ref.bucket, objectPath: ref.objectPath, error: String(err?.message || err) };
+  } catch (err: unknown) {
+    return {
+      deleted: false,
+      reason: 'no_ref',
+      bucket: ref.bucket,
+      objectPath: ref.objectPath,
+      error: getErrorMessage(err),
+    };
   }
 }
 
@@ -129,7 +163,7 @@ export async function OPTIONS() {
  *  2) Delete associated GCS files (pngData, svgData, simplifiedSvgData if present)
  *  3) Delete the DB record
  */
-export async function DELETE(request) {
+export async function DELETE(request: Request) {
   const headers = setCORSHeaders();
 
   try {
@@ -145,6 +179,8 @@ export async function DELETE(request) {
     const objectId = new ObjectId(id);
 
     const client = await clientPromise;
+
+    // NOTE: if you want this configurable, use requiredEnv('MONGODB_DB') instead of hardcoding
     const database = client.db('svgfacetpaintbynumber');
     const collection = database.collection(collectionName);
 
@@ -155,18 +191,19 @@ export async function DELETE(request) {
       return NextResponse.json({ error: 'Record not found in database' }, { status: 404, headers });
     }
 
-    // Delete GCS objects referenced by the document
-    const deleteTargets = [];
-    if (doc.pngData) deleteTargets.push({ key: 'pngData', value: doc.pngData });
-    if (doc.svgData) deleteTargets.push({ key: 'svgData', value: doc.svgData });
-    if (doc.simplifiedSvgData) deleteTargets.push({ key: 'simplifiedSvgData', value: doc.simplifiedSvgData });
+    type DeleteTargetKey = 'pngData' | 'svgData' | 'simplifiedSvgData';
+    const deleteTargets: Array<{ key: DeleteTargetKey; value: unknown }> = [];
 
-    const deletedFiles = {};
+    if ((doc as any).pngData) deleteTargets.push({ key: 'pngData', value: (doc as any).pngData });
+    if ((doc as any).svgData) deleteTargets.push({ key: 'svgData', value: (doc as any).svgData });
+    if ((doc as any).simplifiedSvgData)
+      deleteTargets.push({ key: 'simplifiedSvgData', value: (doc as any).simplifiedSvgData });
+
+    const deletedFiles: Partial<Record<DeleteTargetKey, DeleteResult>> = {};
     for (const t of deleteTargets) {
       deletedFiles[t.key] = await deleteIfPresent(t.value);
     }
 
-    // Delete DB record
     const deleteQuery = userId ? { _id: objectId, userId } : { _id: objectId };
     const result = await collection.deleteOne(deleteQuery);
 
@@ -174,14 +211,10 @@ export async function DELETE(request) {
       return NextResponse.json({ error: 'Record not deleted (race condition)' }, { status: 409, headers });
     }
 
+    return NextResponse.json({ message: 'Record deleted successfully', deletedFiles }, { status: 200, headers });
+  } catch (error: unknown) {
     return NextResponse.json(
-      { message: 'Record deleted successfully', deletedFiles },
-      { status: 200, headers }
-    );
-  } catch (error) {
-    console.error('Error deleting record or file:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete record or file', details: String(error?.message || error) },
+      { error: 'Failed to delete record or file', details: getErrorMessage(error) },
       { status: 500, headers }
     );
   }

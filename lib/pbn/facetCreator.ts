@@ -183,3 +183,5 @@ export class FacetCreator {
         facet.neighbourFacetsIsDirty = false;
     }
 }
+
+export { FacetResult };

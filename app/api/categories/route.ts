@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
 
@@ -10,17 +11,17 @@ if (!mongoUri) throw new Error('Missing environment variable: MONGODB_URI');
 const VIRTUAL_CATEGORY_ALL_ID = 'all';
 const VIRTUAL_CATEGORY_NEW_ID = 'new';
 
-const globalForMongo = globalThis;
+const globalForMongo: any = globalThis as any;
 
-let clientPromise;
+let clientPromise: Promise<MongoClient>;
 if (process.env.NODE_ENV === 'development') {
   if (!globalForMongo._mongoClientPromise) {
-    const client = new MongoClient(mongoUri);
+    const client = new MongoClient(mongoUri as string);
     globalForMongo._mongoClientPromise = client.connect();
   }
   clientPromise = globalForMongo._mongoClientPromise;
 } else {
-  const client = new MongoClient(mongoUri);
+  const client = new MongoClient(mongoUri as string);
   clientPromise = client.connect();
 }
 
