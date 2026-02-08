@@ -1,9 +1,6 @@
 // app/api/your-route/route.js
 import { NextResponse } from 'next/server';
-import { MongoClient } from 'mongodb';
-
-const uri = process.env.NEXT_PUBLIC_MONGODB_URI;
-const client = new MongoClient(uri);
+import { getMongoClient, getDbName } from '@/lib/mongo';
 
 function setCORSHeaders() {
   return {
@@ -32,8 +29,8 @@ export async function GET(req) {
   }
 
   try {
-    await client.connect();
-    const database = client.db('svgfacetpaintbynumber');
+    const client = await getMongoClient();
+    const database = client.db(getDbName());
     const collection = database.collection('svgdata');
 
     const query = { userId };
@@ -61,7 +58,7 @@ export async function GET(req) {
     };
 
     return NextResponse.json(response, { headers });
-  } finally {
-    await client.close();
+  } catch (e) {
+    return NextResponse.json({ error: e?.message || 'Failed to load data' }, { status: 500, headers });
   }
 }

@@ -191,17 +191,41 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       publicUrlPng = `data:image/png;base64,${pngBase64}`;
     }
 
-    // Save record in MongoDB (same collection name as the previous server)
+    // Save record in MongoDB.
+    // IMPORTANT: Do NOT require GCS URLs here.
+    // In your logs, GCS may fail (billing disabled) and we fall back to data URLs.
+    // If we don't persist those, the client will navigate to /home?id=<recordId>
+    // but the record won't exist -> /api/svgdata?id=... returns 404.
     const mongoUri = process.env.MONGODB_URI || process.env.NEXT_PUBLIC_MONGODB_URI;
-    const canPersist = Boolean(mongoUri) && Boolean(publicUrlSvg) && !publicUrlSvg.startsWith('data:');
+    const canPersist = Boolean(mongoUri);
     if (!canPersist) {
       return json({
         message: 'Your image was processed successfully!',
         dbRecord: null,
+        recordId: null,
         publicUrlSvg,
         publicUrlPng,
         colors,
+        warning: 'MONGODB_URI is not configured; result was not saved.',
       });
+    }
+
+    // Guard: MongoDB document limit is 16MB. If we are using inline data URLs,
+    // keep a little safety margin.
+    const approxBytes =
+      Buffer.byteLength(publicUrlSvg ?? '', 'utf8') +
+      Buffer.byteLength(publicUrlPng ?? '', 'utf8') +
+      Buffer.byteLength(JSON.stringify(colors ?? []), 'utf8');
+    const maxBytes = 14 * 1024 * 1024;
+    if (approxBytes > maxBytes) {
+      return json(
+        {
+          error:
+            'Processed result is too large to store inline. Enable GCS storage or reduce image size / facets.',
+          approxBytes,
+        },
+        413,
+      );
     }
     const client = await getMongoClient();
     const db = client.db(getDbName());
@@ -225,10 +249,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       date: new Date().toISOString(),
     });
 
-    logger.log('Image processed successfully', { userId, recordId: insertRes.insertedId.toString() });
+    const recordId = insertRes.insertedId.toString();
+    logger.log('Image processed successfully', { userId, recordId });
 
     return json({
       message: 'Your image was processed successfully!',
+      recordId,
       dbRecord: { _id: insertRes.insertedId, userId, svgData: publicUrlSvg, pngData: publicUrlPng, colors },
       publicUrlSvg,
       publicUrlPng,

@@ -20,5 +20,13 @@ export function getMongoClient(): Promise<MongoClient> {
 }
 
 export function getDbName(): string {
-  return process.env.MONGODB_DB_NAME || process.env.DB_NAME || 'myDatabase';
+  // Keep database name consistent across ALL routes.
+  // Prefer MONGODB_DB (common) then MONGODB_DB_NAME (alt), then DB_NAME.
+  // Default matches the DB you showed in MongoDB Compass: svgfacetpaintbynumber.
+  return (
+    process.env.MONGODB_DB ||
+    process.env.MONGODB_DB_NAME ||
+    process.env.DB_NAME ||
+    'svgfacetpaintbynumber'
+  );
 }
