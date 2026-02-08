@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 type Category = {
   _id: string;
@@ -60,6 +60,8 @@ function parseColors(input: string): { colors: string[]; invalid: string[] } {
 }
 
 export default function UploadSvgPage() {
+  const formRef = useRef<HTMLFormElement>(null);
+
   const [userId, setUserId] = useState('anonymous');
 
   const [svgFile, setSvgFile] = useState<File | null>(null);
@@ -123,7 +125,10 @@ export default function UploadSvgPage() {
       if (!res.ok) throw new Error(json?.error || 'Failed to create category');
 
       const createdName = json.category?.name || name;
-      setAlert({ kind: 'success', text: json.created ? `Category created: ${createdName}` : `Category already exists: ${createdName}` });
+      setAlert({
+        kind: 'success',
+        text: json.created ? `Category created: ${createdName}` : `Category already exists: ${createdName}`,
+      });
 
       setNewCategoryName('');
       await fetchCategories();
@@ -145,9 +150,17 @@ export default function UploadSvgPage() {
     setSelectedCategoryIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
+  function hardResetFormUI() {
+    // Clears actual <input type="file"> UI values too
+    formRef.current?.reset();
+  }
+
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setAlert(null);
+
+    // ✅ Snapshot the form element immediately (safe after await)
+    const formEl = e.currentTarget;
 
     if (!svgFile) {
       setAlert({ kind: 'error', text: 'Please select an SVG file to upload.' });
@@ -176,7 +189,7 @@ export default function UploadSvgPage() {
       fd.append('userId', userId.trim() || 'anonymous');
       fd.append('colors', JSON.stringify(colors));
       fd.append('categories', JSON.stringify(selectedCategoryIds));
-      fd.append('newCategory', ''); // category creation is handled by the "Add" button
+      fd.append('newCategory', ''); // creation is handled by "Add"
       fd.append('hasSimplifiedSvg', String(hasSimplifiedSvg));
 
       if (uploadImage && imageFile) {
@@ -192,14 +205,16 @@ export default function UploadSvgPage() {
 
       setAlert({ kind: 'success', text: json?.message || 'SVG data uploaded successfully!' });
 
-      // Reset
+      // Reset state
       setSvgFile(null);
       setImageFile(null);
       setColorsText('');
       setSelectedCategoryIds([]);
       setHasSimplifiedSvg(false);
       setUploadImage(false);
-      (e.currentTarget as HTMLFormElement).reset();
+
+      // ✅ Reset the form using the captured element (NOT e.currentTarget)
+      formEl.reset();
 
       await fetchCategories();
     } catch (err: unknown) {
@@ -217,7 +232,7 @@ export default function UploadSvgPage() {
       </p>
 
       <div className="card" style={{ marginTop: 16 }}>
-        <form onSubmit={onSubmit}>
+        <form ref={formRef} onSubmit={onSubmit}>
           <div className="row">
             <label style={{ width: '100%' }}>
               User ID
@@ -467,14 +482,15 @@ export default function UploadSvgPage() {
                 setSelectedCategoryIds([]);
                 setNewCategoryName('');
                 setHasSimplifiedSvg(false);
+
+                // ✅ also clears the native file inputs
+                hardResetFormUI();
               }}
               disabled={isSubmitting}
             >
               Reset
             </button>
-            <small>
-              Tip: keep SVG size reasonable; huge SVGs can increase upload time.
-            </small>
+            <small>Tip: keep SVG size reasonable; huge SVGs can increase upload time.</small>
           </div>
         </form>
       </div>
