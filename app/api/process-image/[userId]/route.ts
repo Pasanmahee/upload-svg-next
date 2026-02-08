@@ -46,6 +46,35 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       return json({ error: 'No image file found. Use form field name "image".' }, 400);
     }
 
+    // Enforce per-user limit BEFORE heavy processing (Sharp + clustering + SVG/PNG generation).
+    // This prevents spending CPU/time when the user already reached MAX_RECORDS_PER_USER.
+    const mongoUri = process.env.MONGODB_URI || process.env.NEXT_PUBLIC_MONGODB_URI;
+    const canPersist = Boolean(mongoUri);
+
+    // Default stays at 3 if env is missing (same as previous behavior).
+    const maxPerUser = Number.parseInt(process.env.MAX_RECORDS_PER_USER || '1', 10);
+    let svgDataCollection: any = null;
+
+    if (canPersist) {
+      const client = await getMongoClient();
+      const db = client.db(getDbName());
+      svgDataCollection = db.collection('svgdata');
+
+      if (Number.isFinite(maxPerUser) && maxPerUser > 0) {
+        const recordCount = await svgDataCollection.countDocuments({ userId });
+        if (recordCount >= maxPerUser) {
+          return json(
+            {
+              error: `Image limit reached. Max ${maxPerUser} images per user. Delete one and try again.`,
+              limit: maxPerUser,
+              current: recordCount,
+            },
+            429
+          );
+        }
+      }
+    }
+
     // Clone base settings + apply any overrides from the request
     const settings: any = { ...(settingsJson as any) };
 
@@ -196,8 +225,6 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     // In your logs, GCS may fail (billing disabled) and we fall back to data URLs.
     // If we don't persist those, the client will navigate to /home?id=<recordId>
     // but the record won't exist -> /api/svgdata?id=... returns 404.
-    const mongoUri = process.env.MONGODB_URI || process.env.NEXT_PUBLIC_MONGODB_URI;
-    const canPersist = Boolean(mongoUri);
     if (!canPersist) {
       return json({
         message: 'Your image was processed successfully!',
@@ -227,17 +254,23 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
         413,
       );
     }
-    const client = await getMongoClient();
-    const db = client.db(getDbName());
-    const svgDataCollection = db.collection('svgdata');
+    // Reuse the collection opened for the early-limit check.
+    // If, for any reason, it wasn't opened (shouldn't happen when canPersist=true),
+    // open it here as a fallback.
+    if (!svgDataCollection) {
+      const client = await getMongoClient();
+      const db = client.db(getDbName());
+      svgDataCollection = db.collection('svgdata');
+    }
 
-    const maxPerUser = Number(process.env.MAX_RECORDS_PER_USER || 3);
+    // Final guard in case another request inserted while this one was processing.
     if (Number.isFinite(maxPerUser) && maxPerUser > 0) {
       const recordCount = await svgDataCollection.countDocuments({ userId });
       if (recordCount >= maxPerUser) {
-        return json({
-          error: `Image limit reached. Max ${maxPerUser} images per user. Delete one and try again.`,
-        }, 400);
+        return json(
+          { error: `Image limit reached. Max ${maxPerUser} images per user. Delete one and try again.` },
+          429,
+        );
       }
     }
 
