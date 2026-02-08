@@ -48,3 +48,24 @@ docker compose up --build
 ```
 
 The container listens on `http://localhost:8080`.
+
+
+git config user.name  "wppmhroo-star"
+git config user.email "wppmh.roo@gmail.com"
+git config credential.username "wppmhroo-star"
+git push -u wppmh main
+
+git config user.name  "wppmhroo-star"
+git config user.email "wppmh.roo@gmail.com"
+git config credential.username "wppmhroo-star"
+git push -u wppmh develop
+
+git config user.name  "pasanmahee"
+git config user.email "pasanmahee.roo@gmail.com"
+git config credential.username "pasanmahee"
+git push -u origin main
+
+git config user.name  "pasanmahee"
+git config user.email "pasanmahee.roo@gmail.com"
+git config credential.username "pasanmahee"
+git push -u origin develop
