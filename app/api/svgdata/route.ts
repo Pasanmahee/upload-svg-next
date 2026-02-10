@@ -274,7 +274,7 @@ export async function POST(req: Request) {
     }
 
     // Basic file validation (size/type)
-    const MAX_SVG_BYTES = 2 * 1024 * 1024; // 2 MB
+    const MAX_SVG_BYTES = 6 * 1024 * 1024; // 6 MB
     const nameLower = String(file.name || '').toLowerCase();
     const looksLikeSvg = nameLower.endsWith('.svg') || String(file.type || '') === 'image/svg+xml';
     if (!looksLikeSvg) {
