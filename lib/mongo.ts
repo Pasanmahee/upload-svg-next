@@ -6,7 +6,7 @@ declare global {
 }
 
 export function getMongoClient(): Promise<MongoClient> {
-  const uri = process.env.MONGODB_URI || process.env.NEXT_PUBLIC_MONGODB_URI;
+  const uri = process.env.MONGODB_URI;
   if (!uri) {
     throw new Error('Missing MONGODB_URI (server env var).');
   }

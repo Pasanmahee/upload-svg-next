@@ -1,7 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
-import { MongoClient, ObjectId } from 'mongodb';
+import { ObjectId } from 'mongodb';
+import { getMongoClient, getDbName } from '@/lib/mongo';
 import { Storage } from '@google-cloud/storage';
+import { getUidIfPresent } from "@/lib/auth";
 
 export const runtime = 'nodejs';
 
@@ -14,8 +16,6 @@ function requiredEnv(name: string): string {
   return v;
 }
 
-const mongoUri = process.env.MONGODB_URI ?? process.env.NEXT_PUBLIC_MONGODB_URI;
-if (!mongoUri) throw new Error('Missing environment variable: MONGODB_URI');
 
 // ✅ Make these guaranteed strings (fixes "string | undefined")
 const defaultBucketName: string = requiredEnv('GCS_BUCKET');
@@ -27,23 +27,6 @@ const VIRTUAL_CATEGORY_NEW_ID = 'new';
 
 // "New" means last N days
 const NEW_WINDOW_DAYS = Number.parseInt(process.env.NEW_WINDOW_DAYS || '30', 10) || 30;
-
-// -----------------------------
-// Mongo (reuse connection)
-// -----------------------------
-const globalForMongo = globalThis as unknown as { _mongoClientPromise?: Promise<MongoClient> };
-
-let clientPromise: Promise<MongoClient>;
-if (process.env.NODE_ENV === 'development') {
-  if (!globalForMongo._mongoClientPromise) {
-    const client = new MongoClient(mongoUri);
-    globalForMongo._mongoClientPromise = client.connect();
-  }
-  clientPromise = globalForMongo._mongoClientPromise;
-} else {
-  const client = new MongoClient(mongoUri);
-  clientPromise = client.connect();
-}
 
 // -----------------------------
 // GCS (signed URLs)
@@ -150,11 +133,25 @@ export async function OPTIONS() {
 // ✅ Proper Next.js route handler signature uses Web Request API (Next.js, 2025). :contentReference[oaicite:2]{index=2}
 type Query = Record<string, any> & { $or?: any[] };
 
+function isValidUserId(userId: unknown): userId is string {
+  // Firebase UID typically matches this character set.
+  // Keep it strict to reduce the risk of accidental operator injection.
+  return typeof userId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(userId);
+}
+
+function normalizeCategoryName(name: unknown): string {
+  return String(name ?? '').trim().toLowerCase();
+}
+
 export async function GET(req: Request) {
   const headers = setCORSHeaders();
 
   try {
     const { searchParams } = new URL(req.url);
+
+    // Optional user context (used to scope private "Create" images)
+    const uid = await getUidIfPresent(req);
+
 
     // Pagination
     const pageRaw = parseInt(searchParams.get('page') || '1', 10);
@@ -185,12 +182,43 @@ export async function GET(req: Request) {
     const hasValidRam = Number.isFinite(deviceRam);
     const isLowComplexity = hasValidRam && deviceRam < threshold;
 
-    const client = await clientPromise;
-    const database = client.db('svgfacetpaintbynumber');
+    const client = await getMongoClient();
+    const database = client.db(getDbName());
     const collection = database.collection('svgdata');
+    const categoriesCollection = database.collection('categories');
 
     // ✅ Type-safe query object (fixes "$or does not exist on type {}")
     const baseQuery: Query = {};
+
+    // -----------------------------
+    // Privacy rule:
+    // - Public library items: documents WITHOUT userId
+    // - User-created items: documents WITH userId
+    // In the landing page, we only show user-created items for the "Create" category,
+    // and only for the requesting user.
+    // -----------------------------
+    let isCreateCategory = false;
+    if (categoryId && categoryId !== VIRTUAL_CATEGORY_ALL_ID && categoryId !== VIRTUAL_CATEGORY_NEW_ID) {
+      if (ObjectId.isValid(categoryId)) {
+        const cat = await categoriesCollection.findOne(
+          { _id: new ObjectId(categoryId) },
+          { projection: { name: 1 } }
+        );
+        const n = normalizeCategoryName((cat as any)?.name);
+        isCreateCategory = n === 'create' || n === 'my works' || n === 'my-works' || n === 'my creations' || n === 'created';
+      }
+    }
+
+    if (isCreateCategory) {
+      // If userId is missing/invalid, return empty instead of leaking other users' creations.
+      if (!uid) {
+        return NextResponse.json({ data: [], page, totalPages: 1, total: 0 }, { headers });
+      }
+      baseQuery.userId = uid;
+    } else {
+      // Hide all user-created/private items from the public library.
+      baseQuery.userId = { $exists: false };
+    }
 
     if (categoryId && categoryId !== VIRTUAL_CATEGORY_ALL_ID) {
       if (categoryId === VIRTUAL_CATEGORY_NEW_ID) {
@@ -260,7 +288,8 @@ export async function GET(req: Request) {
     );
 
     const total = await collection.countDocuments(query);
-    const totalPages = Math.ceil(total / limit);
+    // Keep totalPages >= 1 so clients that assume at least one page don't break.
+    const totalPages = Math.max(1, Math.ceil(total / limit));
 
     const debug =
       searchParams.get('debug') === '1' && process.env.NODE_ENV === 'development'

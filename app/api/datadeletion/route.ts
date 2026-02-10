@@ -1,9 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
-import { MongoClient } from 'mongodb';
+import { getMongoClient, getDbName } from '@/lib/mongo';
 
-const uri = process.env.NEXT_PUBLIC_MONGODB_URI;
-const client = new MongoClient(uri as string);
+export const runtime = 'nodejs';
 
 function setCORSHeaders() {
   return {
@@ -24,7 +23,9 @@ export async function OPTIONS() {
   return new NextResponse(null, { headers });
 }
 
-export async function GET(req: { url: string | URL; }) {
+// NOTE: Kept as GET to avoid breaking existing clients.
+// This endpoint records a deletion request.
+export async function GET(req: Request) {
   const headers = setCORSHeaders();
 
   try {
@@ -40,8 +41,9 @@ export async function GET(req: { url: string | URL; }) {
       return NextResponse.json({ error: 'Invalid email format', status: 'failed' }, { status: 400, headers });
     }
 
-    await client.connect();
-    const database = client.db('svgfacetpaintbynumber');
+    // Use shared/cached Mongo client (no per-request connect/close)
+    const client = await getMongoClient();
+    const database = client.db(getDbName());
     const collection = database.collection('dataDeletionRequests');
 
     // Check if the email already exists in the database
@@ -51,8 +53,8 @@ export async function GET(req: { url: string | URL; }) {
       return NextResponse.json(
         {
           message: 'A deletion request for this email already exists.',
-          status: existingRequest.status,
-          requestId: existingRequest._id,
+          status: (existingRequest as any).status,
+          requestId: (existingRequest as any)._id,
         },
         { headers }
       );
@@ -62,7 +64,7 @@ export async function GET(req: { url: string | URL; }) {
     const deletionRequest = {
       email,
       requestedAt: new Date(),
-      status: 'pending', // You can track the status of the deletion request
+      status: 'pending',
     };
 
     const result = await collection.insertOne(deletionRequest);
@@ -78,7 +80,5 @@ export async function GET(req: { url: string | URL; }) {
   } catch (error) {
     console.error('Error recording data deletion request:', error);
     return NextResponse.json({ error: 'Internal server error', status: 'failed' }, { status: 500, headers });
-  } finally {
-    await client.close();
   }
 }

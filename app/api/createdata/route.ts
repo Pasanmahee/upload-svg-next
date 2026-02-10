@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { getBucketName, getStorage } from '@/lib/gcs';
+import { verifyFirebaseAuth } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 
@@ -14,6 +15,9 @@ function setCORSHeaders(): Record<string, string> {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    // Prevent intermediary caching across users.
+    'Cache-Control': 'no-store',
+    Vary: 'Authorization',
   };
 }
 
@@ -101,8 +105,22 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers });
 }
 
+/**
+ * GET /api/createdata?page=1&limit=10
+ *
+ * Returns ONLY the authenticated user's created images.
+ * Authentication: Authorization: Bearer <Firebase ID token>
+ */
 export async function GET(request: Request) {
   const headers = setCORSHeaders();
+
+  const auth = await verifyFirebaseAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(
+      { error: 'Unauthorized' },
+      { status: 401, headers },
+    );
+  }
 
   try {
     const { searchParams } = new URL(request.url);
@@ -114,16 +132,11 @@ export async function GET(request: Request) {
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 10;
     const skip = (page - 1) * limit;
 
-    const userId = searchParams.get('userId');
-    if (!userId) {
-      return NextResponse.json({ error: 'userId is required' }, { status: 400, headers });
-    }
-
     const client = await getMongoClient();
     const database = client.db(getDbName());
     const collection = database.collection('svgdata');
 
-    const query = { userId };
+    const query = { userId: auth.uid };
 
     const data = await collection
       .find(query, {
@@ -143,13 +156,10 @@ export async function GET(request: Request) {
     );
 
     const total = await collection.countDocuments(query);
-    const totalPages = Math.ceil(total / limit);
+    const totalPages = Math.ceil(total / limit) || 1;
 
     return NextResponse.json({ data: signedData, page, totalPages, total }, { headers });
   } catch (e: unknown) {
-    return NextResponse.json(
-      { error: getErrorMessage(e) },
-      { status: 500, headers },
-    );
+    return NextResponse.json({ error: getErrorMessage(e) }, { status: 500, headers });
   }
 }

@@ -1,29 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
-import { MongoClient } from 'mongodb';
+import { getMongoClient, getDbName } from '@/lib/mongo';
 
 export const runtime = 'nodejs';
-
-const mongoUri = process.env.MONGODB_URI || process.env.NEXT_PUBLIC_MONGODB_URI;
-if (!mongoUri) throw new Error('Missing environment variable: MONGODB_URI');
 
 // Virtual categories (do NOT store in DB)
 const VIRTUAL_CATEGORY_ALL_ID = 'all';
 const VIRTUAL_CATEGORY_NEW_ID = 'new';
-
-const globalForMongo: any = globalThis as any;
-
-let clientPromise: Promise<MongoClient>;
-if (process.env.NODE_ENV === 'development') {
-  if (!globalForMongo._mongoClientPromise) {
-    const client = new MongoClient(mongoUri as string);
-    globalForMongo._mongoClientPromise = client.connect();
-  }
-  clientPromise = globalForMongo._mongoClientPromise;
-} else {
-  const client = new MongoClient(mongoUri as string);
-  clientPromise = client.connect();
-}
 
 function setCORSHeaders() {
   return {
@@ -42,8 +25,8 @@ export async function GET() {
   const headers = setCORSHeaders();
 
   try {
-    const client = await clientPromise;
-    const database = client.db('svgfacetpaintbynumber');
+    const client = await getMongoClient();
+    const database = client.db(getDbName());
     const collection = database.collection('categories');
 
     const docs = await collection
@@ -52,9 +35,9 @@ export async function GET() {
       .toArray();
 
     // Convert to { _id: string, name: string } and remove any stored "New"/"All" to avoid duplicates
-    const categories = docs
-      .map((d) => ({ _id: d._id.toString(), name: d.name }))
-      .filter((c) => {
+    const categories = (docs || [])
+      .map((d: any) => ({ _id: d._id.toString(), name: d.name }))
+      .filter((c: any) => {
         const n = String(c.name || '').trim().toLowerCase();
         return n !== 'new' && n !== 'all';
       });

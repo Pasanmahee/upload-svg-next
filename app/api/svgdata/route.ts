@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
-import { MongoClient, ObjectId } from 'mongodb';
+import { ObjectId } from 'mongodb';
+import { getMongoClient, getDbName } from '@/lib/mongo';
 import { Storage } from '@google-cloud/storage';
 import sharp from 'sharp';
+import { getUidIfPresent } from "@/lib/auth";
 
 export const runtime = 'nodejs';
 
@@ -17,31 +19,6 @@ function json(data: unknown, status = 200) {
 
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: corsHeaders });
-}
-
-// ---------- Mongo (cached) ----------
-declare global {
-  // eslint-disable-next-line no-var
-  var __mongoClientPromise: Promise<MongoClient> | undefined;
-}
-
-function getMongoUri(): string | null {
-  return process.env.MONGODB_URI || process.env.NEXT_PUBLIC_MONGODB_URI || null;
-}
-
-function getDbName(): string {
-  return process.env.MONGODB_DB || 'svgfacetpaintbynumber';
-}
-
-async function getMongoClient(): Promise<MongoClient> {
-  const uri = getMongoUri();
-  if (!uri) throw new Error('Missing environment variable: MONGODB_URI');
-
-  if (!global.__mongoClientPromise) {
-    const client = new MongoClient(uri);
-    global.__mongoClientPromise = client.connect();
-  }
-  return global.__mongoClientPromise;
 }
 
 // ---------- GCS helpers (lazy, no module-scope throw) ----------
@@ -177,6 +154,22 @@ function toBool(v: any) {
   return s === 'true' || s === '1' || s === 'yes' || s === 'on';
 }
 
+function isValidUserId(userId: unknown): userId is string {
+  return typeof userId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(userId);
+}
+
+function isSafeIdLike(s: unknown): s is string {
+  // Allow ObjectId strings or simple tokens; reject Mongo operator-ish chars.
+  return typeof s === 'string' && s.length > 0 && s.length <= 64 && !/[.$\s]/.test(s);
+}
+
+function safeBaseName(fileName: string): string {
+  const base = String(fileName || 'upload.svg').split(/[/\\]/).pop() || 'upload.svg';
+  // Keep it GCS-friendly and predictable.
+  const cleaned = base.replace(/[^A-Za-z0-9._-]/g, '_');
+  return cleaned.length > 120 ? cleaned.slice(0, 120) : cleaned;
+}
+
 // =====================
 // GET /api/svgdata?id=...
 // Ionic uses this.
@@ -185,6 +178,7 @@ function toBool(v: any) {
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
+  const uid = await getUidIfPresent(req);
 
   if (!id) return json({ message: 'ID is required' }, 400);
   if (!ObjectId.isValid(id)) return json({ message: 'Invalid id' }, 400);
@@ -210,6 +204,13 @@ export async function GET(req: Request) {
 
     if (!doc) {
       return json({ message: 'Document not found', tried: collectionsToTry }, 404);
+    }
+
+    // If this record belongs to a user, only that user may read it.
+    if (doc?.userId && typeof doc.userId === 'string') {
+      if (!uid || uid !== doc.userId) {
+        return json({ message: 'Forbidden' }, 403);
+      }
     }
 
     // Map fields from either collection shape:
@@ -262,18 +263,38 @@ export async function GET(req: Request) {
 // =====================
 export async function POST(req: Request) {
   try {
+    // ✅ Option B: derive user identity ONLY from verified Firebase ID token.
+    // If no token is present, this upload becomes a public/library item (no userId stored).
+    const uid = await getUidIfPresent(req);
+
     const form = await req.formData();
     const file = form.get('file');
     if (!(file instanceof File)) {
       return json({ message: 'Please select an SVG file to upload.' }, 400);
     }
 
+    // Basic file validation (size/type)
+    const MAX_SVG_BYTES = 2 * 1024 * 1024; // 2 MB
+    const nameLower = String(file.name || '').toLowerCase();
+    const looksLikeSvg = nameLower.endsWith('.svg') || String(file.type || '') === 'image/svg+xml';
+    if (!looksLikeSvg) {
+      return json({ message: 'Only SVG files are allowed.' }, 400);
+    }
+    if (Number.isFinite(file.size) && file.size > MAX_SVG_BYTES) {
+      return json({ message: 'SVG file is too large (max 2MB).' }, 400);
+    }
+
     const colorsRaw = String(form.get('colors') ?? '[]');
     const categoriesRaw = String(form.get('categories') ?? '[]');
-    const newCategory = String(form.get('newCategory') ?? '').trim();
+    const newCategoryRaw = String(form.get('newCategory') ?? '').trim();
+    const newCategory =
+      newCategoryRaw && newCategoryRaw.length <= 40 && /^[A-Za-z0-9 _-]{1,40}$/.test(newCategoryRaw)
+        ? newCategoryRaw
+        : '';
     const hasSimplifiedSvg = toBool(form.get('hasSimplifiedSvg'));
     const imageFile = form.get('imageFile');
-    const userId = String(form.get('userId') ?? 'anonymous').trim() || 'anonymous';
+    // Ignore any userId sent by the client (never trust it). Use the verified uid.
+    const userId = uid && isValidUserId(uid) ? uid : null;
 
     const { colors, strokeColor } = parseColorsAny(colorsRaw);
 
@@ -284,6 +305,14 @@ export async function POST(req: Request) {
     } catch {
       selectedCategories = [];
     }
+
+    // Validate & de-dup category ids
+    selectedCategories = Array.from(
+      new Set(selectedCategories.map((c) => String(c).trim()).filter((c) => isSafeIdLike(c)))
+    ).slice(0, 20);
+
+    // Clamp palette size
+    const safeColors = (colors || []).map((c) => String(c).trim()).filter(Boolean).slice(0, 64);
 
     // Read original SVG
     const originalSvgData = await file.text();
@@ -302,7 +331,15 @@ export async function POST(req: Request) {
     let pngContentType = 'image/png';
     let pngExt = 'png';
 
+    const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
     if (imageFile instanceof File) {
+      const allowed = ['image/png', 'image/jpeg'];
+      if (!allowed.includes(imageFile.type)) {
+        return json({ message: 'Only PNG or JPEG images are allowed for preview.' }, 400);
+      }
+      if (Number.isFinite(imageFile.size) && imageFile.size > MAX_IMAGE_BYTES) {
+        return json({ message: 'Preview image is too large (max 10MB).' }, 400);
+      }
       const ab = await imageFile.arrayBuffer();
       const raw = Buffer.from(ab);
 
@@ -343,8 +380,9 @@ export async function POST(req: Request) {
     const storage = getStorage();
 
     const rnd = Math.floor(Math.random() * 1_000_000);
-    const svgObjectPath = `svgs/${file.name}-${rnd}.svg`;
-    const pngObjectPath = `images/${file.name}-${rnd}.${pngExt}`;
+    const safeName = safeBaseName(file.name);
+    const svgObjectPath = `svgs/${safeName}-${rnd}.svg`;
+    const pngObjectPath = `images/${safeName}-${rnd}.${pngExt}`;
 
     let svgDataStored = '';
     let pngDataStored = '';
@@ -398,17 +436,22 @@ export async function POST(req: Request) {
       }
     }
 
-    const insertRes = await svgDataCollection.insertOne({
-      userId,
+    const insertDoc: any = {
       svgData: svgDataStored,
       pngData: pngDataStored,
-      colors,
+      colors: safeColors,
       categories: selectedCategories,
       hasSimplifiedSvg,
       createdAt: new Date(),
       updatedAt: new Date(),
       date: new Date().toISOString(),
-    });
+    };
+
+    // Only store userId when it is a valid, non-empty UID.
+    // If omitted, this becomes a public/library item.
+    if (userId) insertDoc.userId = userId;
+
+    const insertRes = await svgDataCollection.insertOne(insertDoc);
 
     return json(
       {
@@ -416,7 +459,7 @@ export async function POST(req: Request) {
         recordId: insertRes.insertedId.toString(),
         svgData: svgDataStored,
         pngData: pngDataStored,
-        colors,
+        colors: safeColors,
         categories: selectedCategories,
         hasSimplifiedSvg,
       },

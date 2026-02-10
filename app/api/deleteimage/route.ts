@@ -1,7 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
-import { MongoClient, ObjectId } from 'mongodb';
+import { ObjectId } from 'mongodb';
+import { getMongoClient, getDbName } from '@/lib/mongo';
 import { Storage } from '@google-cloud/storage';
+import { verifyFirebaseAuth } from "@/lib/auth";
 
 export const runtime = 'nodejs';
 
@@ -14,29 +16,10 @@ function requiredEnv(name: string): string {
   return v;
 }
 
-// Keep fallback if you still use it, but prefer MONGODB_URI
-const mongoUri = process.env.MONGODB_URI ?? process.env.NEXT_PUBLIC_MONGODB_URI;
-if (!mongoUri) throw new Error('Missing environment variable: MONGODB_URI');
-
+// Required env vars
 const defaultBucketName = requiredEnv('GCS_BUCKET');
 const saKeyB64 = requiredEnv('GCP_SA_KEY_B64');
 
-// -----------------------------
-// Mongo (reuse connection)
-// -----------------------------
-const globalForMongo = globalThis as unknown as { _mongoClientPromise?: Promise<MongoClient> };
-let clientPromise: Promise<MongoClient>;
-
-if (process.env.NODE_ENV === 'development') {
-  if (!globalForMongo._mongoClientPromise) {
-    const client = new MongoClient(mongoUri);
-    globalForMongo._mongoClientPromise = client.connect();
-  }
-  clientPromise = globalForMongo._mongoClientPromise;
-} else {
-  const client = new MongoClient(mongoUri);
-  clientPromise = client.connect();
-}
 
 // -----------------------------
 // GCS client (service account from base64 JSON)
@@ -63,7 +46,7 @@ function setCORSHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-admin-key',
   };
 }
 
@@ -75,6 +58,10 @@ function getErrorMessage(err: unknown): string {
   } catch {
     return 'Unknown error';
   }
+}
+
+function isValidUserId(userId: unknown): userId is string {
+  return typeof userId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(userId);
 }
 
 type GcsRef = { bucket: string; objectPath: string };
@@ -169,8 +156,14 @@ export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
-    const userId = searchParams.get('userId') || null;
+    const auth = await verifyFirebaseAuth(request);
+    const uid = auth.ok ? auth.uid : null;
     const collectionName = searchParams.get('collection') || 'svgdata';
+
+    const allowedCollections = new Set(['svgdata', 'createdata']);
+    if (!allowedCollections.has(collectionName)) {
+      return NextResponse.json({ error: 'Invalid collection' }, { status: 400, headers });
+    }
 
     if (!id || !ObjectId.isValid(id)) {
       return NextResponse.json({ error: 'Valid id is required' }, { status: 400, headers });
@@ -178,17 +171,35 @@ export async function DELETE(request: Request) {
 
     const objectId = new ObjectId(id);
 
-    const client = await clientPromise;
+    const client = await getMongoClient();
 
     // NOTE: if you want this configurable, use requiredEnv('MONGODB_DB') instead of hardcoding
-    const database = client.db('svgfacetpaintbynumber');
+    const database = client.db(getDbName());
     const collection = database.collection(collectionName);
 
-    const findQuery = userId ? { _id: objectId, userId } : { _id: objectId };
-    const doc = await collection.findOne(findQuery);
+    // Always fetch by id first, then enforce ownership/admin rules.
+    const doc = await collection.findOne({ _id: objectId });
 
     if (!doc) {
       return NextResponse.json({ error: 'Record not found in database' }, { status: 404, headers });
+    }
+
+    // Ownership / access rules:
+    // - If this record has a userId -> only that user may delete it.
+    // - If this record has NO userId -> treat as public/library; require an admin key.
+    if ((doc as any)?.userId && typeof (doc as any).userId === 'string') {
+      if (!auth.ok) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers });
+      }
+      if (uid !== (doc as any).userId) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers });
+      }
+    } else {
+      const adminKey = process.env.ADMIN_DELETE_KEY || '';
+      const provided = request.headers.get('x-admin-key') || '';
+      if (!adminKey || provided !== adminKey) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers });
+      }
     }
 
     type DeleteTargetKey = 'pngData' | 'svgData' | 'simplifiedSvgData';
@@ -204,7 +215,9 @@ export async function DELETE(request: Request) {
       deletedFiles[t.key] = await deleteIfPresent(t.value);
     }
 
-    const deleteQuery = userId ? { _id: objectId, userId } : { _id: objectId };
+    const deleteQuery = (doc as any)?.userId
+      ? { _id: objectId, userId: (doc as any).userId }
+      : { _id: objectId };
     const result = await collection.deleteOne(deleteQuery);
 
     if (result.deletedCount === 0) {

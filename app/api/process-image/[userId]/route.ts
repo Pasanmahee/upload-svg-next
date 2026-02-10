@@ -10,6 +10,7 @@ import { FacetBorderTracer } from '@/lib/pbn/facetBorderTracer';
 import { FacetBorderSegmenter } from '@/lib/pbn/facetBorderSegmenter';
 import { FacetLabelPlacer } from '@/lib/pbn/facetLabelPlacer';
 import { createSVG, extractColorPalette } from '@/lib/pbnSvg';
+import { verifyFirebaseAuth } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 
@@ -26,7 +27,13 @@ export async function OPTIONS() {
 function json(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    // Prevent intermediary caching across users.
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      Vary: 'Authorization',
+      ...corsHeaders,
+    },
   });
 }
 
@@ -35,8 +42,27 @@ type ImageDataLike = { width: number; height: number; data: Uint8ClampedArray };
 // Next.js 15+ passes params as a Promise ("Dynamic APIs are Asynchronous").
 // Unwrap with await before reading properties.
 export async function POST(request: Request, ctx: { params: Promise<{ userId: string }> }) {
-  const { userId: rawUserId } = await ctx.params;
-  const userId = decodeURIComponent(rawUserId);
+  // Be tolerant to Next.js versions that pass params either as an object or a Promise.
+  const params = await Promise.resolve((ctx as any)?.params);
+  const rawUserId = (params as any)?.userId;
+  if (typeof rawUserId !== 'string' || !rawUserId) {
+    return json({ error: 'Missing userId in URL.' }, 400);
+  }
+
+  let userId: string;
+  try {
+    userId = decodeURIComponent(rawUserId);
+  } catch {
+    return json({ error: 'Invalid userId encoding in URL.' }, 400);
+  }
+
+  const auth = await verifyFirebaseAuth(request);
+  if (!auth.ok) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+  if (auth.uid !== userId) {
+    return json({ error: "Forbidden" }, 403);
+  }
 
   try {
     const form = await request.formData();
@@ -48,8 +74,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
 
     // Enforce per-user limit BEFORE heavy processing (Sharp + clustering + SVG/PNG generation).
     // This prevents spending CPU/time when the user already reached MAX_RECORDS_PER_USER.
-    const mongoUri = process.env.MONGODB_URI || process.env.NEXT_PUBLIC_MONGODB_URI;
-    const canPersist = Boolean(mongoUri);
+    const canPersist = Boolean(process.env.MONGODB_URI);
+
 
     // Default stays at 3 if env is missing (same as previous behavior).
     const maxPerUser = Number.parseInt(process.env.MAX_RECORDS_PER_USER || '1', 10);
