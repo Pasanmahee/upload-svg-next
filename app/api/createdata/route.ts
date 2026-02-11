@@ -111,6 +111,120 @@ export async function OPTIONS() {
  * Returns ONLY the authenticated user's created images.
  * Authentication: Authorization: Bearer <Firebase ID token>
  */
+
+export async function POST(request: Request) {
+  const headers = {
+    ...setCORSHeaders(),
+    'Cache-Control': 'no-store',
+    Vary: 'Authorization',
+  };
+
+  const auth = await verifyFirebaseAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers });
+  }
+
+  if (!process.env.MONGODB_URI) {
+    return NextResponse.json({ error: 'MONGODB_URI is not configured' }, { status: 500, headers });
+  }
+
+  let body: any = null;
+  try {
+    body = await request.json();
+  } catch {
+    body = null;
+  }
+
+  const svgObjectPath = typeof body?.svgObjectPath === 'string' ? body.svgObjectPath : '';
+  const pngObjectPath = typeof body?.pngObjectPath === 'string' ? body.pngObjectPath : '';
+  const categories = Array.isArray(body?.categories) ? body.categories.map((x: any) => String(x)) : [];
+  const hasSimplifiedSvg = Boolean(body?.hasSimplifiedSvg);
+
+  // Colors: accept array OR { palette, stroke } object (same as /api/svgdata).
+  let colors: string[] = [];
+  try {
+    const raw = body?.colors;
+    if (Array.isArray(raw)) colors = raw.map((c: any) => String(c).trim()).filter(Boolean);
+    else if (raw && typeof raw === 'object' && Array.isArray(raw.palette)) {
+      colors = raw.palette.map((c: any) => String(c).trim()).filter(Boolean);
+    }
+  } catch {
+    colors = [];
+  }
+
+  function isSafeObjectPath(p: string) {
+    if (!p) return false;
+    if (p.length > 512) return false;
+    if (p.includes('..')) return false;
+    if (p.startsWith('/')) return false;
+    // Force per-user namespace for safety
+    if (!p.startsWith(`users/${auth.uid}/`)) return false;
+    return true;
+  }
+
+  if (!isSafeObjectPath(svgObjectPath) || !isSafeObjectPath(pngObjectPath)) {
+    return NextResponse.json(
+      { error: 'Invalid object paths' },
+      { status: 400, headers }
+    );
+  }
+
+  const bucketName = getBucketName();
+  const svgData = `gs://${bucketName}/${svgObjectPath}`;
+  const pngData = `gs://${bucketName}/${pngObjectPath}`;
+
+  try {
+    const client = await getMongoClient();
+    const database = client.db(getDbName());
+    const collection = database.collection('svgdata');
+
+    // Enforce per-user limit (same env as /api/process-image).
+    const maxPerUser = Number.parseInt(process.env.MAX_RECORDS_PER_USER || '1', 10);
+    if (Number.isFinite(maxPerUser) && maxPerUser > 0) {
+      const count = await collection.countDocuments({ userId: auth.uid });
+      if (count >= maxPerUser) {
+        return NextResponse.json(
+          { error: `Max created works limit reached (${maxPerUser})` },
+          { status: 403, headers }
+        );
+      }
+    }
+
+    const now = new Date();
+    const insertRes = await collection.insertOne({
+      userId: auth.uid,
+      svgData,
+      pngData,
+      colors,
+      categories,
+      hasSimplifiedSvg,
+      createdAt: now,
+      updatedAt: now,
+      date: now.toISOString(),
+    });
+
+    // Return signed read URLs for immediate display.
+    const signedSvg = await signReadUrl(svgData);
+    const signedPng = await signReadUrl(pngData);
+
+    return NextResponse.json(
+      {
+        message: 'Created work saved',
+        recordId: insertRes.insertedId.toString(),
+        svgData: signedSvg || svgData,
+        pngData: signedPng || pngData,
+        colors,
+        categories,
+        hasSimplifiedSvg,
+      },
+      { status: 200, headers }
+    );
+  } catch (e: unknown) {
+    return NextResponse.json({ error: getErrorMessage(e) }, { status: 500, headers });
+  }
+}
+
+
 export async function GET(request: Request) {
   const headers = setCORSHeaders();
 
