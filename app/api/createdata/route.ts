@@ -124,6 +124,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers });
   }
 
+  const uid = auth.uid;
+
   if (!process.env.MONGODB_URI) {
     return NextResponse.json({ error: 'MONGODB_URI is not configured' }, { status: 500, headers });
   }
@@ -158,7 +160,7 @@ export async function POST(request: Request) {
     if (p.includes('..')) return false;
     if (p.startsWith('/')) return false;
     // Force per-user namespace for safety
-    if (!p.startsWith(`users/${auth.uid}/`)) return false;
+    if (!p.startsWith(`users/${uid}/`)) return false;
     return true;
   }
 
@@ -181,7 +183,7 @@ export async function POST(request: Request) {
     // Enforce per-user limit (same env as /api/process-image).
     const maxPerUser = Number.parseInt(process.env.MAX_RECORDS_PER_USER || '1', 10);
     if (Number.isFinite(maxPerUser) && maxPerUser > 0) {
-      const count = await collection.countDocuments({ userId: auth.uid });
+      const count = await collection.countDocuments({ userId: uid });
       if (count >= maxPerUser) {
         return NextResponse.json(
           { error: `Max created works limit reached (${maxPerUser})` },
@@ -192,7 +194,7 @@ export async function POST(request: Request) {
 
     const now = new Date();
     const insertRes = await collection.insertOne({
-      userId: auth.uid,
+      userId: uid,
       svgData,
       pngData,
       colors,
@@ -236,6 +238,8 @@ export async function GET(request: Request) {
     );
   }
 
+  const uid = auth.uid;
+
   try {
     const { searchParams } = new URL(request.url);
 
@@ -250,7 +254,7 @@ export async function GET(request: Request) {
     const database = client.db(getDbName());
     const collection = database.collection('svgdata');
 
-    const query = { userId: auth.uid };
+    const query = { userId: uid };
 
     const data = await collection
       .find(query, {
