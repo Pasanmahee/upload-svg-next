@@ -7,6 +7,13 @@ import { verifyFirebaseAuth } from "@/lib/auth";
 
 export const runtime = 'nodejs';
 
+// Feature flag
+function isDeleteApiDisabled(): boolean {
+  const v = (process.env.DISABLE_DELETE_IMAGE_API || '').toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
+
 // -----------------------------
 // Env (server-only)
 // -----------------------------
@@ -16,28 +23,34 @@ function requiredEnv(name: string): string {
   return v;
 }
 
-// Required env vars
-const defaultBucketName = requiredEnv('GCS_BUCKET');
-const saKeyB64 = requiredEnv('GCP_SA_KEY_B64');
+// Required env vars (only needed when delete API is enabled)
+const DELETE_API_DISABLED = isDeleteApiDisabled();
 
+let defaultBucketName = '';
+let storage: Storage | null = null;
 
 // -----------------------------
 // GCS client (service account from base64 JSON)
 // -----------------------------
 type GcpCreds = { project_id?: string; [k: string]: any };
 
-let gcpCredentials: GcpCreds;
-try {
-  const json = Buffer.from(saKeyB64, 'base64').toString('utf8');
-  gcpCredentials = JSON.parse(json) as GcpCreds;
-} catch {
-  throw new Error('Invalid GCP_SA_KEY_B64: expected base64-encoded service account JSON');
-}
+if (!DELETE_API_DISABLED) {
+  defaultBucketName = requiredEnv('GCS_BUCKET');
+  const saKeyB64 = requiredEnv('GCP_SA_KEY_B64');
 
-const storage = new Storage({
-  projectId: gcpCredentials.project_id,
-  credentials: gcpCredentials as any,
-});
+  let gcpCredentials: GcpCreds;
+  try {
+    const json = Buffer.from(saKeyB64, 'base64').toString('utf8');
+    gcpCredentials = JSON.parse(json) as GcpCreds;
+  } catch {
+    throw new Error('Invalid GCP_SA_KEY_B64: expected base64-encoded service account JSON');
+  }
+
+  storage = new Storage({
+    projectId: gcpCredentials.project_id,
+    credentials: gcpCredentials as any,
+  });
+}
 
 // -----------------------------
 // Helpers
@@ -119,6 +132,9 @@ async function deleteIfPresent(maybeUrlOrPath: unknown): Promise<DeleteResult> {
   if (!ref) return { deleted: false, reason: 'no_ref' };
 
   try {
+    if (!storage) {
+      return { deleted: false, reason: 'no_ref', bucket: ref.bucket, objectPath: ref.objectPath, error: 'Delete disabled' };
+    }
     await storage.bucket(ref.bucket).file(ref.objectPath).delete({ ignoreNotFound: true });
     return { deleted: true, bucket: ref.bucket, objectPath: ref.objectPath };
   } catch (err: unknown) {
@@ -152,6 +168,10 @@ export async function OPTIONS() {
  */
 export async function DELETE(request: Request) {
   const headers = setCORSHeaders();
+
+  if (DELETE_API_DISABLED) {
+    return NextResponse.json({ error: 'Delete image disabled' }, { status: 503, headers });
+  }
 
   try {
     const { searchParams } = new URL(request.url);
