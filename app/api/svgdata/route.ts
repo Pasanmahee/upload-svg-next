@@ -274,14 +274,14 @@ export async function POST(req: Request) {
     }
 
     // Basic file validation (size/type)
-    const MAX_SVG_BYTES = 6 * 1024 * 1024; // 6 MB
+    const MAX_SVG_BYTES = 12 * 1024 * 1024; // 10 MB
     const nameLower = String(file.name || '').toLowerCase();
     const looksLikeSvg = nameLower.endsWith('.svg') || String(file.type || '') === 'image/svg+xml';
     if (!looksLikeSvg) {
       return json({ message: 'Only SVG files are allowed.' }, 400);
     }
     if (Number.isFinite(file.size) && file.size > MAX_SVG_BYTES) {
-      return json({ message: 'SVG file is too large (max 2MB).' }, 400);
+      return json({ message: 'SVG file is too large (max 10MB).' }, 400);
     }
 
     const colorsRaw = String(form.get('colors') ?? '[]');
