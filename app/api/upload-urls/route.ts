@@ -26,7 +26,7 @@ export async function OPTIONS() {
 
 /**
  * POST /api/upload-urls
- * Returns signed V4 PUT URLs to upload a processed SVG + PNG directly to GCS.
+ * Returns signed V4 PUT URLs to upload a processed SVG + WebP preview directly to GCS.
  *
  * The client MUST:
  *  - Upload with PUT
@@ -36,7 +36,7 @@ export async function OPTIONS() {
  * {
  *   bucket: string,
  *   svg: { objectPath: string, uploadUrl: string, contentType: string },
- *   png: { objectPath: string, uploadUrl: string, contentType: string },
+ *   preview: { objectPath: string, uploadUrl: string, contentType: string },
  *   expiresAt: string
  * }
  */
@@ -57,10 +57,10 @@ export async function POST(request: Request) {
   // Lock object paths to the user.
   const base = `users/${auth.uid}/${id}`;
   const svgObjectPath = `${base}/result.svg`;
-  const pngObjectPath = `${base}/preview.png`;
+  const previewObjectPath = `${base}/preview.webp`;
 
   const svgContentType = 'image/svg+xml';
-  const pngContentType = 'image/png';
+  const previewContentType = 'image/webp';
 
   try {
     const [svgUploadUrl] = await bucket.file(svgObjectPath).getSignedUrl({
@@ -70,17 +70,20 @@ export async function POST(request: Request) {
       contentType: svgContentType,
     });
 
-    const [pngUploadUrl] = await bucket.file(pngObjectPath).getSignedUrl({
+    const [previewUploadUrl] = await bucket.file(previewObjectPath).getSignedUrl({
       version: 'v4',
       action: 'write',
       expires,
-      contentType: pngContentType,
+      contentType: previewContentType,
     });
 
     return json({
       bucket: bucketName,
       svg: { objectPath: svgObjectPath, uploadUrl: svgUploadUrl, contentType: svgContentType },
-      png: { objectPath: pngObjectPath, uploadUrl: pngUploadUrl, contentType: pngContentType },
+      // New preferred key
+      preview: { objectPath: previewObjectPath, uploadUrl: previewUploadUrl, contentType: previewContentType },
+      // Back-compat: older clients expect `png` even though the object is now WebP.
+      png: { objectPath: previewObjectPath, uploadUrl: previewUploadUrl, contentType: previewContentType },
       expiresAt: expires.toISOString(),
     });
   } catch (e: any) {

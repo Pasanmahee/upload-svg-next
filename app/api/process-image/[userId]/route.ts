@@ -11,6 +11,7 @@ import { FacetBorderSegmenter } from '@/lib/pbn/facetBorderSegmenter';
 import { FacetLabelPlacer } from '@/lib/pbn/facetLabelPlacer';
 import { createSVG, extractColorPalette } from '@/lib/pbnSvg';
 import { verifyFirebaseAuth } from '@/lib/auth';
+import { optimiseRaster } from '@/lib/imageOptimiser';
 
 export const runtime = 'nodejs';
 
@@ -195,21 +196,33 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       null,
     );
 
-    // Convert SVG -> PNG via sharp
+    // Convert SVG -> aggressively optimised WebP (best for landing-page load speed)
     const svgBuffer = Buffer.from(svgString, 'utf8');
     const reducedWidth = Math.max(1, Math.floor(imgData.width * 0.9));
     const reducedHeight = Math.max(1, Math.floor(imgData.height * 0.9));
 
-    const pngBuffer = await sharp(svgBuffer)
-      .resize(reducedWidth, reducedHeight)
-      .png({ compressionLevel: 9, quality: 80 })
-      .toBuffer();
+    // Keep previews reasonably small even if SVG multiplier is large.
+    const envMaxDim = Number.parseInt(process.env.WEBP_MAX_DIM || process.env.PNG_MAX_DIM || '1024', 10) || 1024;
+    const previewMaxDim = Math.min(envMaxDim, Math.max(reducedWidth, reducedHeight));
+
+    // Paint-by-number output has limited distinct colors (k clusters + borders + labels).
+    const approxPalette = Math.max(32, Math.min(128, (colormapResult.colorsByIndex?.length || 0) + 24));
+
+    const raster = await optimiseRaster(svgBuffer, {
+      maxDim: previewMaxDim,
+      maxColors: approxPalette,
+      background: '#ffffff',
+    });
+
+    const previewBuffer = raster.buffer;
+    const previewContentType = raster.contentType;
+    const previewExt = raster.ext;
 
     const colors = extractColorPalette(colormapResult.colorsByIndex as any);
 
     // Upload SVG + PNG to GCS (preferred). If GCS is not configured, fall back to inline data URLs.
     let publicUrlSvg: string | null = null;
-    let publicUrlPng: string | null = null;
+    let publicUrlPng: string | null = null; // kept for backward compatibility (now stores WebP)
 
     const disableGcs = process.env.DISABLE_GCS === '1';
     if (!disableGcs) {
@@ -220,16 +233,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
 
         const randomNumber = Math.floor(Math.random() * 1_000_000);
         const svgFilePath = `svgs/svg-${randomNumber}.svg`;
-        const pngFilePath = `images/png-${randomNumber}.png`;
+        const pngFilePath = `images/preview-${randomNumber}.${previewExt}`;
 
         await bucket.file(svgFilePath).save(svgString, {
           resumable: false,
           metadata: { contentType: 'image/svg+xml' },
         });
 
-        await bucket.file(pngFilePath).save(pngBuffer, {
+        await bucket.file(pngFilePath).save(previewBuffer, {
           resumable: false,
-          metadata: { contentType: 'image/png' },
+          metadata: { contentType: previewContentType },
         });
 
         publicUrlSvg = `https://storage.googleapis.com/${bucketName}/${svgFilePath}`;
@@ -241,9 +254,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
 
     if (!publicUrlSvg || !publicUrlPng) {
       const svgBase64 = Buffer.from(svgString, 'utf8').toString('base64');
-      const pngBase64 = pngBuffer.toString('base64');
+      const pngBase64 = previewBuffer.toString('base64');
       publicUrlSvg = `data:image/svg+xml;base64,${svgBase64}`;
-      publicUrlPng = `data:image/png;base64,${pngBase64}`;
+      publicUrlPng = `data:${previewContentType};base64,${pngBase64}`;
     }
 
     // Save record in MongoDB.
@@ -258,6 +271,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
         recordId: null,
         publicUrlSvg,
         publicUrlPng,
+        previewContentType,
+        previewExt,
         colors,
         warning: 'MONGODB_URI is not configured; result was not saved.',
       });
@@ -317,6 +332,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       dbRecord: { _id: insertRes.insertedId, userId, svgData: publicUrlSvg, pngData: publicUrlPng, colors },
       publicUrlSvg,
       publicUrlPng,
+      previewContentType,
+      previewExt,
       colors,
     });
   } catch (error: any) {

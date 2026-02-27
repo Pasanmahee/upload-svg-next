@@ -289,7 +289,7 @@ export default function UploadSvgPage() {
                   if (!e.currentTarget.checked) setImageFile(null);
                 }}
               />
-              Attach image file (JPG/PNG) (optional)
+              Attach image file (JPG/PNG/WebP) (optional)
             </label>
             <div className="help">If enabled, the client will send an image alongside the SVG.</div>
           </div>
@@ -301,7 +301,7 @@ export default function UploadSvgPage() {
                 <div>
                   <input
                     type="file"
-                    accept="image/png,image/jpeg"
+                    accept="image/png,image/jpeg,image/webp"
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                       const f = e.currentTarget.files?.[0] ?? null;
                       setImageFile(f);

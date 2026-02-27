@@ -4,6 +4,7 @@ import { getMongoClient, getDbName } from '@/lib/mongo';
 import { Storage } from '@google-cloud/storage';
 import sharp from 'sharp';
 import { getUidIfPresent } from "@/lib/auth";
+import { optimiseRaster } from '@/lib/imageOptimiser';
 
 export const runtime = 'nodejs';
 
@@ -324,18 +325,20 @@ export async function POST(req: Request) {
       .replace(/stroke\s*=\s*['"][^'"]*['"]/gi, `stroke="${strokeColor}"`)
       .replace(/stroke\s*:\s*rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\);/gi, `stroke:${strokeColor};`);
 
-    // Prepare PNG buffer:
+    // Prepare preview image buffer (WebP):
     // - if user provided JPG/PNG, resize it
-    // - else generate outline-only PNG from thumbnail SVG
-    let pngBuffer: Buffer;
-    let pngContentType = 'image/png';
-    let pngExt = 'png';
+    // - else generate outline-only preview from thumbnail SVG
+    let pngBuffer: Buffer; // variable name kept for backward compatibility
+    let pngContentType = 'image/webp';
+    let pngExt = 'webp';
+
+    const envMaxDim = Number.parseInt(process.env.WEBP_MAX_DIM || process.env.PNG_MAX_DIM || '1024', 10) || 1024;
 
     const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
     if (imageFile instanceof File) {
-      const allowed = ['image/png', 'image/jpeg'];
+      const allowed = ['image/png', 'image/jpeg', 'image/webp'];
       if (!allowed.includes(imageFile.type)) {
-        return json({ message: 'Only PNG or JPEG images are allowed for preview.' }, 400);
+        return json({ message: 'Only PNG, JPEG, or WebP images are allowed for preview.' }, 400);
       }
       if (Number.isFinite(imageFile.size) && imageFile.size > MAX_IMAGE_BYTES) {
         return json({ message: 'Preview image is too large (max 10MB).' }, 400);
@@ -350,12 +353,14 @@ export async function POST(req: Request) {
       const reducedW = Math.max(1, Math.floor(w * 0.9));
       const reducedH = Math.max(1, Math.floor(h * 0.9));
 
-      if (imageFile.type === 'image/jpeg') {
-        pngContentType = 'image/jpeg';
-        pngExt = 'jpeg';
-        pngBuffer = await sharp(raw).resize(reducedW, reducedH).jpeg({ quality: 80 }).toBuffer();
-      } else {
-        pngBuffer = await sharp(raw).resize(reducedW, reducedH).png({ compressionLevel: 9, quality: 80 }).toBuffer();
+      {
+        const raster = await optimiseRaster(raw, {
+          maxDim: Math.min(envMaxDim, Math.max(reducedW, reducedH)),
+          background: '#ffffff',
+        });
+        pngBuffer = raster.buffer;
+        pngContentType = raster.contentType;
+        pngExt = raster.ext;
       }
     } else {
       const thumbSvg = buildThumbnailSvg(modifiedSvgData, strokeColor);
@@ -368,11 +373,19 @@ export async function POST(req: Request) {
       const reducedW = Math.max(1, Math.floor(w * 0.9));
       const reducedH = Math.max(1, Math.floor(h * 0.9));
 
-      pngBuffer = await sharp(thumbBuf)
-        .resize(reducedW, reducedH)
-        .flatten({ background: '#ffffff' })
-        .png({ compressionLevel: 9, quality: 80 })
-        .toBuffer();
+      // Outline-only thumbnails compress extremely well with a tiny palette.
+      {
+        const raster = await optimiseRaster(thumbBuf, {
+          maxDim: Math.min(envMaxDim, Math.max(reducedW, reducedH)),
+          // Hint: outline-only thumbnails are effectively low-palette.
+          maxColors: 16,
+          minColors: 2,
+          background: '#ffffff',
+        });
+        pngBuffer = raster.buffer;
+        pngContentType = raster.contentType;
+        pngExt = raster.ext;
+      }
     }
 
     // Upload to GCS if configured; otherwise fallback to data URLs
@@ -408,12 +421,12 @@ export async function POST(req: Request) {
       } catch {
         // fallback to data URLs
         svgDataStored = `data:image/svg+xml;base64,${svgBuffer.toString('base64')}`;
-        const prefix = pngContentType === 'image/jpeg' ? 'data:image/jpeg;base64,' : 'data:image/png;base64,';
+        const prefix = `data:${pngContentType};base64,`;
         pngDataStored = `${prefix}${pngBuffer.toString('base64')}`;
       }
     } else {
       svgDataStored = `data:image/svg+xml;base64,${svgBuffer.toString('base64')}`;
-      const prefix = pngContentType === 'image/jpeg' ? 'data:image/jpeg;base64,' : 'data:image/png;base64,';
+      const prefix = `data:${pngContentType};base64,`;
       pngDataStored = `${prefix}${pngBuffer.toString('base64')}`;
     }
 
