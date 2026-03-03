@@ -228,7 +228,7 @@ export default function UploadSvgPage() {
     <main>
       <h1>Upload SVG Data</h1>
       <p style={{ marginTop: -8 }}>
-        <Link href="/">← Back to image processing</Link>
+        <Link href="/">← Back to image processing</Link> · <Link href="/manage-images">Manage Uploaded Images</Link>
       </p>
 
       <div className="card" style={{ marginTop: 16 }}>

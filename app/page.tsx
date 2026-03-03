@@ -54,7 +54,8 @@ export default function Home() {
         This page calls <code>/api/process-image/[userId]</code> (no auth) to generate an SVG paint-by-number + a PNG preview.
       </p>
       <p>
-        Also available: <Link href="/upload-svg">Upload SVG Data</Link> (categories, colors, simplified flag).
+        Also available: <Link href="/upload-svg">Upload SVG Data</Link> (categories, colors, simplified flag) ·{' '}
+        <Link href="/manage-images">Manage Uploaded Images</Link> (view/edit/replace/delete).
       </p>
 
       <div className="card">
