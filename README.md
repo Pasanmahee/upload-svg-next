@@ -69,3 +69,46 @@ git config user.name  "pasanmahee"
 git config user.email "pasanmahee.roo@gmail.com"
 git config credential.username "pasanmahee"
 git push -u origin develop
+## Admin login for Manage Uploaded Images
+
+`/manage-images` no longer uses the old shared `x-admin-key` flow.
+
+For now, you can log in by typing an email address on the Manage Uploaded Images page. The backend accepts that temporary login only when the email exactly matches `ADMIN_EMAILS` in `.env.local`.
+
+```env
+ADMIN_EMAILS="your-admin@gmail.com,another-admin@gmail.com"
+```
+
+Google/Firebase login is still kept in the code for later. When Firebase env values are not configured, the Google button stays disabled and the email login can still be used.
+
+### Optional Firebase Google setup for later
+
+1. In Firebase Console, open **Authentication → Sign-in method**.
+2. Enable **Google** as a sign-in provider.
+3. In **Project settings → General → Your apps**, create/select a Web app and copy the Firebase config values into `.env.local`:
+   - `NEXT_PUBLIC_FIREBASE_API_KEY`
+   - `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
+   - `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
+   - `NEXT_PUBLIC_FIREBASE_APP_ID`
+   - optional storage/sender fields
+4. Add Firebase Admin SDK service-account credentials for server-side ID-token verification:
+   - `FIREBASE_SERVICE_ACCOUNT_B64`, or
+   - `FIREBASE_SERVICE_ACCOUNT_JSON`, or
+   - `GOOGLE_APPLICATION_CREDENTIALS`
+
+Restart the app after editing env values:
+
+```bash
+rm -rf .next
+npm install
+npm run dev
+```
+
+### Access rules
+
+- Public library can be viewed without login.
+- `My works` requires a valid Firebase login and shows only that user's records.
+- `All / admin view`, editing public records, and deleting public records require either:
+  - an email login matching `ADMIN_EMAILS`, or
+  - a signed-in Google/Firebase account whose email is listed in `ADMIN_EMAILS`.
+- Admin emails can manage both public and private image records.

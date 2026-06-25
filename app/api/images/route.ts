@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { getBucketName, getStorage } from '@/lib/gcs';
-import { verifyFirebaseAuth } from '@/lib/auth';
+import { isAdminEmail, verifyFirebaseAuth } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 
@@ -15,7 +15,7 @@ function setCORSHeaders(): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-admin-key',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Email',
     'Cache-Control': 'no-store',
   };
 }
@@ -112,7 +112,7 @@ export async function OPTIONS() {
  *
  * - public: records without userId (default)
  * - mine: records with userId === verified Firebase uid
- * - all: public + mine (requires admin key)
+ * - all: public + mine (requires Google admin login)
  */
 export async function GET(request: Request) {
   const headers = setCORSHeaders();
@@ -130,10 +130,7 @@ export async function GET(request: Request) {
     // Auth / admin
     const auth = await verifyFirebaseAuth(request);
     const uid = auth.ok ? auth.uid : null;
-
-    const adminKey = process.env.ADMIN_EDIT_KEY || process.env.ADMIN_DELETE_KEY || '';
-    const providedAdminKey = request.headers.get('x-admin-key') || '';
-    const isAdmin = Boolean(adminKey) && providedAdminKey === adminKey;
+    const isAdmin = auth.ok && isAdminEmail(auth.email);
 
     let query: any = {};
     if (scope === 'mine') {

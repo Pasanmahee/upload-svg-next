@@ -4,7 +4,7 @@ import { ObjectId } from 'mongodb';
 import sharp from 'sharp';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { getBucketName, getStorage } from '@/lib/gcs';
-import { verifyFirebaseAuth } from '@/lib/auth';
+import { type AuthResult, isAdminEmail, verifyFirebaseAuth } from '@/lib/auth';
 import { optimiseRaster } from '@/lib/imageOptimiser';
 
 export const runtime = 'nodejs';
@@ -17,7 +17,7 @@ function setCORSHeaders(): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, PATCH, PUT, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-admin-key',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Email',
     'Cache-Control': 'no-store',
   };
 }
@@ -206,20 +206,19 @@ function applyStrokeFillRules(originalSvg: string, strokeColor: string): string 
     .replace(/stroke\s*:\s*rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\);/gi, `stroke:${strokeColor};`);
 }
 
-function assertAdminOrOwner(request: Request, doc: any, authUid: string | null): { ok: true } | { ok: false; status: number; error: string } {
+function assertAdminOrOwner(doc: any, auth: AuthResult): { ok: true } | { ok: false; status: number; error: string } {
+  const authUid = auth.ok ? auth.uid : null;
+  const isAdmin = auth.ok && isAdminEmail(auth.email);
+
+  if (isAdmin) return { ok: true };
+
   if (doc?.userId && typeof doc.userId === 'string') {
     if (!authUid) return { ok: false, status: 401, error: 'Unauthorized' };
     if (authUid !== doc.userId) return { ok: false, status: 403, error: 'Forbidden' };
     return { ok: true };
   }
 
-  const adminKey = process.env.ADMIN_EDIT_KEY || process.env.ADMIN_DELETE_KEY || '';
-  const provided = request.headers.get('x-admin-key') || '';
-  if (!adminKey || provided !== adminKey) {
-    return { ok: false, status: 403, error: 'Forbidden' };
-  }
-
-  return { ok: true };
+  return { ok: false, status: auth.ok ? 403 : 401, error: auth.ok ? 'Forbidden' : 'Unauthorized' };
 }
 
 export async function OPTIONS() {
@@ -250,8 +249,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
 
     // Private records require ownership
     if (doc?.userId && typeof doc.userId === 'string') {
-      if (!uid) return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers });
-      if (uid !== doc.userId) return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers });
+      const isAdmin = auth.ok && isAdminEmail(auth.email);
+      if (!uid && !isAdmin) return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers });
+      if (uid !== doc.userId && !isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers });
     }
 
     const pngData = await signReadUrl((doc as any).pngData);
@@ -304,7 +304,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
       return NextResponse.json({ error: 'Not found' }, { status: 404, headers });
     }
 
-    const access = assertAdminOrOwner(request, doc, uid);
+    const access = assertAdminOrOwner(doc, auth);
     if (!access.ok) {
       return NextResponse.json({ error: access.error }, { status: access.status, headers });
     }
@@ -368,7 +368,7 @@ export async function PUT(request: Request, ctx: { params: Promise<{ id: string 
       return NextResponse.json({ error: 'Not found' }, { status: 404, headers });
     }
 
-    const access = assertAdminOrOwner(request, doc, uid);
+    const access = assertAdminOrOwner(doc, auth);
     if (!access.ok) {
       return NextResponse.json({ error: access.error }, { status: access.status, headers });
     }

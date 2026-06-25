@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { onAuthStateChanged, type User } from 'firebase/auth';
+import { getFirebaseClientAuth, hasFirebasePublicConfig, signInWithGooglePopup, signOutFirebase } from '@/lib/firebaseClient';
 
 type Category = { _id: string; name: string };
 
@@ -98,8 +100,11 @@ function formatDate(s?: string) {
 
 export default function ManageImagesPage() {
   const [scope, setScope] = useState<'public' | 'mine' | 'all'>('public');
-  const [adminKey, setAdminKey] = useState('');
   const [firebaseToken, setFirebaseToken] = useState('');
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminEmailDraft, setAdminEmailDraft] = useState('');
+  const firebaseConfigured = hasFirebasePublicConfig();
 
   const [categories, setCategories] = useState<Category[]>([]);
   const categoryMap = useMemo(() => new Map(categories.map((c) => [c._id, c.name] as const)), [categories]);
@@ -107,8 +112,77 @@ export default function ManageImagesPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
+  const [isAuthBusy, setIsAuthBusy] = useState(false);
   const [alert, setAlert] = useState<Alert>(null);
   const [images, setImages] = useState<ImageRecord[]>([]);
+
+  function authHeaders(extra?: Record<string, string>, token = firebaseToken): Record<string, string> {
+    const email = adminEmail.trim().toLowerCase();
+    return {
+      ...(extra || {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(email ? { 'x-admin-email': email } : {}),
+    };
+  }
+
+  function saveAdminEmailLogin() {
+    const email = adminEmailDraft.trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      setAlert({ kind: 'error', text: 'Enter a valid admin email.' });
+      return;
+    }
+    localStorage.setItem('manageImagesAdminEmail', email);
+    setAdminEmail(email);
+    setAdminEmailDraft(email);
+    setAlert({ kind: 'success', text: `Admin email login active: ${email}` });
+  }
+
+  function clearAdminEmailLogin() {
+    localStorage.removeItem('manageImagesAdminEmail');
+    setAdminEmail('');
+    setAdminEmailDraft('');
+    if (!currentUser && scope !== 'public') setScope('public');
+    setAlert({ kind: 'info', text: 'Admin email login cleared' });
+  }
+
+  async function refreshFirebaseToken(user = currentUser): Promise<string> {
+    if (!user) return '';
+    const token = await user.getIdToken();
+    setFirebaseToken(token);
+    return token;
+  }
+
+  async function signInWithGoogle() {
+    setIsAuthBusy(true);
+    setAlert(null);
+    try {
+      const result = await signInWithGooglePopup();
+      const token = await result.user.getIdToken();
+      setCurrentUser(result.user);
+      setFirebaseToken(token);
+      setAlert({ kind: 'success', text: `Signed in as ${result.user.email || result.user.displayName || 'Google user'}` });
+    } catch (err: unknown) {
+      setAlert({ kind: 'error', text: `Google sign-in failed: ${getErrorMessage(err)}` });
+    } finally {
+      setIsAuthBusy(false);
+    }
+  }
+
+  async function signOutGoogle() {
+    setIsAuthBusy(true);
+    setAlert(null);
+    try {
+      await signOutFirebase();
+      setCurrentUser(null);
+      setFirebaseToken('');
+      if (!adminEmail && scope !== 'public') setScope('public');
+      setAlert({ kind: 'info', text: 'Signed out of Google' });
+    } catch (err: unknown) {
+      setAlert({ kind: 'error', text: `Sign out failed: ${getErrorMessage(err)}` });
+    } finally {
+      setIsAuthBusy(false);
+    }
+  }
 
   async function fetchCategories() {
     try {
@@ -127,11 +201,9 @@ export default function ManageImagesPage() {
     setIsLoading(true);
     setAlert(null);
     try {
+      const token = currentUser ? await refreshFirebaseToken(currentUser) : firebaseToken;
       const res = await fetch(`/api/images?scope=${encodeURIComponent(scope)}&page=${nextPage}&limit=24`, {
-        headers: {
-          ...(adminKey ? { 'x-admin-key': adminKey } : {}),
-          ...(firebaseToken ? { authorization: `Bearer ${firebaseToken}` } : {}),
-        },
+        headers: authHeaders(undefined, token),
       });
       const text = await res.text();
       const json = text ? JSON.parse(text) : {};
@@ -150,6 +222,36 @@ export default function ManageImagesPage() {
   }
 
   useEffect(() => {
+    const savedEmail = localStorage.getItem('manageImagesAdminEmail') || '';
+    if (savedEmail) {
+      setAdminEmail(savedEmail);
+      setAdminEmailDraft(savedEmail);
+    }
+
+    if (!firebaseConfigured) return undefined;
+
+    try {
+      const auth = getFirebaseClientAuth();
+      return onAuthStateChanged(auth, async (user) => {
+        setCurrentUser(user);
+        if (user) {
+          try {
+            const token = await user.getIdToken();
+            setFirebaseToken(token);
+          } catch (err: unknown) {
+            setAlert({ kind: 'error', text: `Could not read Google session: ${getErrorMessage(err)}` });
+          }
+        } else {
+          setFirebaseToken('');
+        }
+      });
+    } catch (err: unknown) {
+      setAlert({ kind: 'error', text: getErrorMessage(err) });
+      return undefined;
+    }
+  }, [firebaseConfigured]);
+
+  useEffect(() => {
     fetchCategories();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -158,19 +260,16 @@ export default function ManageImagesPage() {
     setPage(1);
     fetchImages(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope]);
+  }, [scope, firebaseToken, adminEmail]);
 
   async function saveMeta(id: string, colors: string[], categoriesIds: string[], hasSimplifiedSvg: boolean) {
     setAlert(null);
     try {
+      const token = currentUser ? await refreshFirebaseToken(currentUser) : firebaseToken;
       const res = await fetch(`/api/images/${encodeURIComponent(id)}`,
         {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(adminKey ? { 'x-admin-key': adminKey } : {}),
-            ...(firebaseToken ? { authorization: `Bearer ${firebaseToken}` } : {}),
-          },
+          headers: authHeaders({ 'Content-Type': 'application/json' }, token),
           body: JSON.stringify({ colors, categories: categoriesIds, hasSimplifiedSvg }),
         }
       );
@@ -188,13 +287,11 @@ export default function ManageImagesPage() {
   async function replaceFiles(id: string, fd: FormData) {
     setAlert(null);
     try {
+      const token = currentUser ? await refreshFirebaseToken(currentUser) : firebaseToken;
       const res = await fetch(`/api/images/${encodeURIComponent(id)}`,
         {
           method: 'PUT',
-          headers: {
-            ...(adminKey ? { 'x-admin-key': adminKey } : {}),
-            ...(firebaseToken ? { authorization: `Bearer ${firebaseToken}` } : {}),
-          },
+          headers: authHeaders(undefined, token),
           body: fd,
         }
       );
@@ -215,12 +312,10 @@ export default function ManageImagesPage() {
     if (!ok) return;
 
     try {
+      const token = currentUser ? await refreshFirebaseToken(currentUser) : firebaseToken;
       const res = await fetch(`/api/deleteimage?id=${encodeURIComponent(id)}&collection=svgdata`, {
         method: 'DELETE',
-        headers: {
-          ...(adminKey ? { 'x-admin-key': adminKey } : {}),
-          ...(firebaseToken ? { authorization: `Bearer ${firebaseToken}` } : {}),
-        },
+        headers: authHeaders(undefined, token),
       });
       const text = await res.text();
       const json = text ? JSON.parse(text) : {};
@@ -247,6 +342,62 @@ export default function ManageImagesPage() {
       )}
 
       <div className="card" style={{ marginTop: 16 }}>
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <div style={{ fontWeight: 700 }}>Admin login</div>
+            <div className="help">
+              For now, enter an email listed in ADMIN_EMAILS. Google login is still kept for later.
+            </div>
+            {adminEmail ? (
+              <div style={{ marginTop: 8 }}>
+                <small>Admin email active: {adminEmail}</small>
+              </div>
+            ) : null}
+            {currentUser ? (
+              <div style={{ marginTop: 8 }}>
+                <small>Google signed in as {currentUser.email || currentUser.displayName || currentUser.uid}</small>
+              </div>
+            ) : null}
+          </div>
+
+          <div style={{ minWidth: 300 }}>
+            <div className="row" style={{ justifyContent: 'flex-end' }}>
+              <input
+                type="email"
+                value={adminEmailDraft}
+                onChange={(e) => setAdminEmailDraft(e.currentTarget.value)}
+                placeholder="admin@example.com"
+                style={{ padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: 12, minWidth: 240 }}
+              />
+              <button onClick={saveAdminEmailLogin}>Login by email</button>
+              {adminEmail ? (
+                <button className="secondary" onClick={clearAdminEmailLogin}>
+                  Clear email
+                </button>
+              ) : null}
+            </div>
+
+            <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
+              {currentUser ? (
+                <button className="secondary" onClick={signOutGoogle} disabled={isAuthBusy}>
+                  {isAuthBusy ? 'Signing out…' : 'Sign out Google'}
+                </button>
+              ) : (
+                <button onClick={signInWithGoogle} disabled={isAuthBusy || !firebaseConfigured} className="secondary">
+                  {isAuthBusy ? 'Opening Google…' : 'Sign in with Google'}
+                </button>
+              )}
+            </div>
+            {!firebaseConfigured ? (
+              <div className="help" style={{ textAlign: 'right', marginTop: 6 }}>
+                Google login disabled until Firebase env values are added.
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginTop: 16 }}>
         <div className="row">
           <label>
             View
@@ -256,43 +407,13 @@ export default function ManageImagesPage() {
                 onChange={(e) => setScope(e.currentTarget.value as any)}
                 style={{ padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: 12, minWidth: 280 }}
               >
-                <option value="public">Public library (no userId)</option>
-                <option value="mine">My works (requires Firebase token)</option>
-                <option value="all">All (requires admin key)</option>
+                <option value="public">Public library</option>
+                <option value="mine">My works</option>
+                <option value="all">All / admin view</option>
               </select>
             </div>
             <div className="help">
-              Editing/deleting public items requires an admin key. Editing/deleting private items requires a Firebase ID token.
-            </div>
-          </label>
-        </div>
-
-        <div className="row" style={{ marginTop: 12 }}>
-          <label style={{ width: '100%' }}>
-            Admin key (x-admin-key)
-            <div>
-              <input
-                type="text"
-                value={adminKey}
-                onChange={(e) => setAdminKey(e.currentTarget.value)}
-                placeholder="ADMIN_EDIT_KEY / ADMIN_DELETE_KEY"
-                style={{ width: '100%' }}
-              />
-            </div>
-          </label>
-        </div>
-
-        <div className="row" style={{ marginTop: 12 }}>
-          <label style={{ width: '100%' }}>
-            Firebase ID token (Authorization: Bearer ...)
-            <div>
-              <input
-                type="text"
-                value={firebaseToken}
-                onChange={(e) => setFirebaseToken(e.currentTarget.value)}
-                placeholder="Paste Firebase ID token (only needed for private records)"
-                style={{ width: '100%' }}
-              />
+              All / admin view and public-item editing are allowed only for emails listed in ADMIN_EMAILS.
             </div>
           </label>
         </div>

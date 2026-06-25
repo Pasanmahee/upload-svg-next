@@ -8,7 +8,7 @@ function setCORSHeaders(): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-admin-key, Email',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Email',
   };
 }
 

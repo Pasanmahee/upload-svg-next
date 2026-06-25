@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { Storage } from '@google-cloud/storage';
-import { verifyFirebaseAuth } from "@/lib/auth";
+import { isAdminEmail, verifyFirebaseAuth } from "@/lib/auth";
 
 export const runtime = 'nodejs';
 
@@ -59,7 +59,7 @@ function setCORSHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-admin-key',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Email',
   };
 }
 
@@ -178,6 +178,7 @@ export async function DELETE(request: Request) {
     const id = searchParams.get('id');
     const auth = await verifyFirebaseAuth(request);
     const uid = auth.ok ? auth.uid : null;
+    const isAdmin = auth.ok && isAdminEmail(auth.email);
     const collectionName = searchParams.get('collection') || 'svgdata';
 
     const allowedCollections = new Set(['svgdata', 'createdata']);
@@ -205,20 +206,18 @@ export async function DELETE(request: Request) {
     }
 
     // Ownership / access rules:
-    // - If this record has a userId -> only that user may delete it.
-    // - If this record has NO userId -> treat as public/library; require an admin key.
-    if ((doc as any)?.userId && typeof (doc as any).userId === 'string') {
-      if (!auth.ok) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers });
-      }
-      if (uid !== (doc as any).userId) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers });
-      }
-    } else {
-      const adminKey = process.env.ADMIN_DELETE_KEY || '';
-      const provided = request.headers.get('x-admin-key') || '';
-      if (!adminKey || provided !== adminKey) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers });
+    // - Admin emails from ADMIN_EMAILS may delete any managed record.
+    // - Non-admin users may delete only their own private records.
+    if (!isAdmin) {
+      if ((doc as any)?.userId && typeof (doc as any).userId === 'string') {
+        if (!auth.ok) {
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers });
+        }
+        if (uid !== (doc as any).userId) {
+          return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers });
+        }
+      } else {
+        return NextResponse.json({ error: auth.ok ? 'Forbidden' : 'Unauthorized' }, { status: auth.ok ? 403 : 401, headers });
       }
     }
 
