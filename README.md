@@ -10,7 +10,7 @@ Next.js (App Router) backend + simple UI for **image → SVG (paint-by-number fa
   - extracted colour palette
   - (optional) a MongoDB record in collection `svgdata`
 - `DELETE /api/delete-image/:userId/:recordId` — deletes the MongoDB record and best-effort deletes the corresponding SVG/PNG files in the configured GCS bucket
-- A basic test UI at `/` (no auth)
+- A protected login-first UI at `/`, `/upload-svg`, and `/manage-images`
 
 ## Environment variables
 
@@ -31,7 +31,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000`. You will be redirected to `/login` until you log in with an email listed in `ADMIN_EMAILS`.
 
 ## Notes
 
@@ -69,17 +69,18 @@ git config user.name  "pasanmahee"
 git config user.email "pasanmahee.roo@gmail.com"
 git config credential.username "pasanmahee"
 git push -u origin develop
-## Admin login for Manage Uploaded Images
+## Login-first admin access
 
-`/manage-images` no longer uses the old shared `x-admin-key` flow.
+The app now shows `/login` before loading any page. `/`, `/upload-svg`, `/manage-images`, and the non-auth API routes are protected by a signed login cookie.
 
-For now, you can log in by typing an email address on the Manage Uploaded Images page. The backend accepts that temporary login only when the email exactly matches `ADMIN_EMAILS` in `.env.local`.
+For now, log in with an email address that exactly matches `ADMIN_EMAILS` in `.env.local`:
 
 ```env
 ADMIN_EMAILS="your-admin@gmail.com,another-admin@gmail.com"
+ADMIN_SESSION_SECRET="use-a-long-random-secret-here"
 ```
 
-Google/Firebase login is still kept in the code for later. When Firebase env values are not configured, the Google button stays disabled and the email login can still be used.
+The old shared `x-admin-key` flow is not used. Google/Firebase login code is still kept for later, but the simple email login is the active path for now.
 
 ### Optional Firebase Google setup for later
 
@@ -106,9 +107,7 @@ npm run dev
 
 ### Access rules
 
-- Public library can be viewed without login.
-- `My works` requires a valid Firebase login and shows only that user's records.
-- `All / admin view`, editing public records, and deleting public records require either:
-  - an email login matching `ADMIN_EMAILS`, or
-  - a signed-in Google/Firebase account whose email is listed in `ADMIN_EMAILS`.
-- Admin emails can manage both public and private image records.
+- No app page loads until login succeeds.
+- Non-auth API routes return `401 Login required` without the signed login cookie.
+- Admin emails listed in `ADMIN_EMAILS` can use the upload page, image management page, `All / admin view`, edit, replace, and delete actions.
+- `/api/auth/login`, `/api/auth/logout`, and `/api/auth/me` remain open so login/logout can work.

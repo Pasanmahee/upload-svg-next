@@ -342,58 +342,9 @@ export default function ManageImagesPage() {
       )}
 
       <div className="card" style={{ marginTop: 16 }}>
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <div style={{ fontWeight: 700 }}>Admin login</div>
-            <div className="help">
-              For now, enter an email listed in ADMIN_EMAILS. Google login is still kept for later.
-            </div>
-            {adminEmail ? (
-              <div style={{ marginTop: 8 }}>
-                <small>Admin email active: {adminEmail}</small>
-              </div>
-            ) : null}
-            {currentUser ? (
-              <div style={{ marginTop: 8 }}>
-                <small>Google signed in as {currentUser.email || currentUser.displayName || currentUser.uid}</small>
-              </div>
-            ) : null}
-          </div>
-
-          <div style={{ minWidth: 300 }}>
-            <div className="row" style={{ justifyContent: 'flex-end' }}>
-              <input
-                type="email"
-                value={adminEmailDraft}
-                onChange={(e) => setAdminEmailDraft(e.currentTarget.value)}
-                placeholder="admin@example.com"
-                style={{ padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: 12, minWidth: 240 }}
-              />
-              <button onClick={saveAdminEmailLogin}>Login by email</button>
-              {adminEmail ? (
-                <button className="secondary" onClick={clearAdminEmailLogin}>
-                  Clear email
-                </button>
-              ) : null}
-            </div>
-
-            <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
-              {currentUser ? (
-                <button className="secondary" onClick={signOutGoogle} disabled={isAuthBusy}>
-                  {isAuthBusy ? 'Signing out…' : 'Sign out Google'}
-                </button>
-              ) : (
-                <button onClick={signInWithGoogle} disabled={isAuthBusy || !firebaseConfigured} className="secondary">
-                  {isAuthBusy ? 'Opening Google…' : 'Sign in with Google'}
-                </button>
-              )}
-            </div>
-            {!firebaseConfigured ? (
-              <div className="help" style={{ textAlign: 'right', marginTop: 6 }}>
-                Google login disabled until Firebase env values are added.
-              </div>
-            ) : null}
-          </div>
+        <div style={{ fontWeight: 700 }}>Protected area</div>
+        <div className="help">
+          You are already logged in from the main login page. All image-management actions now use the signed login cookie.
         </div>
       </div>
 

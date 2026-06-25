@@ -1,4 +1,5 @@
 import { getFirebaseAuth } from '@/lib/firebaseAdmin';
+import { getSessionEmailFromCookieHeader } from '@/lib/session';
 
 export function extractBearerToken(authorizationHeader: string | null): string | null {
   if (!authorizationHeader) return null;
@@ -49,11 +50,19 @@ function safeUidFromEmail(email: string): string {
   return `admin-email:${email}`;
 }
 
-function verifyAdminEmailFallback(request: Request): AuthResult | null {
-  const email = normalizeEmail(request.headers.get('x-admin-email'));
-  if (!email) return null;
+function authResultFromAdminEmail(email: string): AuthResult {
   if (!isAdminEmail(email)) return { ok: false, error: 'invalid_token' };
   return { ok: true, uid: safeUidFromEmail(email), email, name: null, provider: 'admin-email' };
+}
+
+function verifyAdminEmailFallback(request: Request): AuthResult | null {
+  const email = normalizeEmail(request.headers.get('x-admin-email'));
+  return email ? authResultFromAdminEmail(email) : null;
+}
+
+async function verifyAdminSessionCookieFallback(request: Request): Promise<AuthResult | null> {
+  const email = await getSessionEmailFromCookieHeader(request.headers.get('cookie'));
+  return email ? authResultFromAdminEmail(email) : null;
 }
 
 /**
@@ -65,7 +74,7 @@ export async function verifyFirebaseAuth(request: Request): Promise<AuthResult> 
   const token = extractBearerToken(request.headers.get('authorization'));
 
   if (!token) {
-    const fallback = verifyAdminEmailFallback(request);
+    const fallback = verifyAdminEmailFallback(request) || (await verifyAdminSessionCookieFallback(request));
     return fallback || { ok: false, error: 'missing_token' };
   }
 
@@ -84,7 +93,7 @@ export async function verifyFirebaseAuth(request: Request): Promise<AuthResult> 
       provider: 'firebase',
     };
   } catch {
-    const fallback = verifyAdminEmailFallback(request);
+    const fallback = verifyAdminEmailFallback(request) || (await verifyAdminSessionCookieFallback(request));
     return fallback || { ok: false, error: 'invalid_token' };
   }
 }
@@ -106,7 +115,7 @@ export async function verifyAdminAuth(request: Request): Promise<AdminAuthResult
 }
 
 export async function getUidIfPresent(request: Request): Promise<string | null> {
-  const fallback = verifyAdminEmailFallback(request);
+  const fallback = verifyAdminEmailFallback(request) || (await verifyAdminSessionCookieFallback(request));
   if (fallback?.ok) return fallback.uid;
 
   const token = extractBearerToken(request.headers.get('authorization'));

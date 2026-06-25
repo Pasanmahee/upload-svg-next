@@ -30,3 +30,11 @@ textarea { font: inherit; padding: 10px 12px; border: 1px solid #d1d5db; border-
 .alert.error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
 .alert.success { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
 .alert.info { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
+
+input[type="email"] { padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 12px; min-width: 280px; }
+button:disabled { opacity: 0.65; cursor: not-allowed; }
+.loginShell { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; background: #f9fafb; }
+.loginCard { width: min(100%, 430px); background: #fff; border: 1px solid #e5e7eb; border-radius: 22px; padding: 24px; box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08); }
+.loginBadge { display: inline-flex; padding: 6px 10px; border-radius: 999px; background: #f3f4f6; color: #374151; font-size: 13px; font-weight: 700; }
+.authBar { position: sticky; top: 0; z-index: 20; display: flex; justify-content: flex-end; align-items: center; gap: 10px; padding: 10px 24px; background: rgba(255,255,255,0.92); border-bottom: 1px solid #e5e7eb; backdrop-filter: blur(8px); font-size: 13px; color: #374151; }
+.authBar button { padding: 7px 10px; border-radius: 10px; }
