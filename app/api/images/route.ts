@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
+import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { getBucketName, getStorage } from '@/lib/gcs';
 import { isAdminEmail, verifyFirebaseAuth } from '@/lib/auth';
@@ -8,6 +9,8 @@ export const runtime = 'nodejs';
 
 // Signed URLs are temporary.
 const SIGNED_URL_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const DEFAULT_PAGE_LIMIT = 12;
+const MAX_PAGE_LIMIT = 48;
 
 type GcsRef = { bucket: string; objectPath: string };
 
@@ -39,7 +42,7 @@ function getErrorMessage(err: unknown): string {
 function parseGcsObjectRef(value: unknown): GcsRef | null {
   if (typeof value !== 'string' || !value) return null;
 
-  // Don’t attempt to sign inline data URLs
+  // Don’t attempt to sign inline data URLs.
   if (value.startsWith('data:')) return null;
 
   const noQuery = value.split('?')[0];
@@ -102,17 +105,25 @@ function toIso(v: any): string | null {
   return String(v);
 }
 
+function parseLimit(value: string | null): number {
+  const raw = Number.parseInt(value || String(DEFAULT_PAGE_LIMIT), 10);
+  if (!Number.isFinite(raw)) return DEFAULT_PAGE_LIMIT;
+  return Math.min(Math.max(raw, 1), MAX_PAGE_LIMIT);
+}
+
 export async function OPTIONS() {
   const headers = setCORSHeaders();
   return new NextResponse(null, { status: 204, headers });
 }
 
 /**
- * GET /api/images?scope=public|mine|all&page=1&limit=24
+ * GET /api/images?scope=public|mine|all&limit=12&after=<mongoId>
  *
- * - public: records without userId (default)
- * - mine: records with userId === verified Firebase uid
- * - all: public + mine (requires Google admin login)
+ * Lightweight cursor pagination:
+ * - fetches only limit + 1 records, so it can know whether a next page exists
+ * - avoids countDocuments(), which can be expensive on larger collections
+ * - avoids skip() for normal next-page navigation
+ * - list view returns pngData only; svgData is fetched from /api/images/:id only when a card is opened
  */
 export async function GET(request: Request) {
   const headers = setCORSHeaders();
@@ -120,12 +131,10 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const scope = (searchParams.get('scope') || 'public').toLowerCase();
+    const limit = parseLimit(searchParams.get('limit'));
+    const after = searchParams.get('after') || '';
 
-    const pageRaw = Number.parseInt(searchParams.get('page') || '1', 10);
-    const limitRaw = Number.parseInt(searchParams.get('limit') || '24', 10);
-    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
-    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 24;
-    const skip = (page - 1) * limit;
+    const afterId = after && ObjectId.isValid(after) ? new ObjectId(after) : null;
 
     // Auth / admin
     const auth = await verifyFirebaseAuth(request);
@@ -135,7 +144,10 @@ export async function GET(request: Request) {
     let query: any = {};
     if (scope === 'mine') {
       if (!uid) {
-        return NextResponse.json({ data: [], page, totalPages: 1, total: 0 }, { headers });
+        return NextResponse.json(
+          { data: [], page: 1, limit, hasNext: false, hasPrev: Boolean(afterId), nextCursor: null },
+          { headers }
+        );
       }
       query = { userId: uid };
     } else if (scope === 'all') {
@@ -148,6 +160,8 @@ export async function GET(request: Request) {
       query = { userId: { $exists: false } };
     }
 
+    if (afterId) query._id = { $lt: afterId };
+
     const client = await getMongoClient();
     const db = client.db(getDbName());
     const collection = db.collection('svgdata');
@@ -156,7 +170,7 @@ export async function GET(request: Request) {
       _id: 1,
       userId: 1,
       pngData: 1,
-      svgData: 1,
+      // Deliberately do not include svgData in list results. It may be large.
       colors: 1,
       categories: 1,
       hasSimplifiedSvg: 1,
@@ -167,21 +181,26 @@ export async function GET(request: Request) {
 
     const docs = await collection
       .find(query, { projection })
-      .sort({ createdAt: -1, date: -1, _id: -1 })
-      .skip(skip)
-      .limit(limit)
+      .sort({ _id: -1 })
+      .limit(limit + 1)
       .toArray();
 
+    const pageDocs = docs.slice(0, limit);
+    const hasNext = docs.length > limit;
+    const lastDoc = pageDocs[pageDocs.length - 1];
+    const nextCursor = hasNext && lastDoc?._id ? String(lastDoc._id) : null;
+
     const data = await Promise.all(
-      (docs || []).map(async (d: any) => {
+      (pageDocs || []).map(async (d: any) => {
         const pngData = await signReadUrl(d?.pngData);
-        const svgData = await signReadUrl(d?.svgData);
 
         return {
           ...d,
           _id: d?._id?.toString?.() ?? String(d?._id ?? ''),
           pngData,
-          svgData,
+          // The detail endpoint can load/sign this only when the user opens a card.
+          svgData: undefined,
+          hasSvgData: Boolean(d?.svgData),
           createdAt: toIso(d?.createdAt),
           updatedAt: toIso(d?.updatedAt),
           date: toIso(d?.date),
@@ -189,10 +208,17 @@ export async function GET(request: Request) {
       })
     );
 
-    const total = await collection.countDocuments(query);
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-
-    return NextResponse.json({ data, page, totalPages, total }, { headers });
+    return NextResponse.json(
+      {
+        data,
+        limit,
+        hasNext,
+        hasPrev: Boolean(afterId),
+        nextCursor,
+        paginationMode: 'cursor',
+      },
+      { headers }
+    );
   } catch (err: unknown) {
     console.error('images GET error:', err);
     return NextResponse.json(

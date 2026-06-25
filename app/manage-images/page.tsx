@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { getFirebaseClientAuth, hasFirebasePublicConfig, signInWithGooglePopup, signOutFirebase } from '@/lib/firebaseClient';
@@ -12,6 +11,7 @@ type ImageRecord = {
   userId?: string;
   pngData?: string;
   svgData?: string;
+  hasSvgData?: boolean;
   colors?: string[];
   categories?: string[];
   hasSimplifiedSvg?: boolean;
@@ -110,7 +110,10 @@ export default function ManageImagesPage() {
   const categoryMap = useMemo(() => new Map(categories.map((c) => [c._id, c.name] as const)), [categories]);
 
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const [pageLimit, setPageLimit] = useState(12);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [cursorHistory, setCursorHistory] = useState<string[]>(['']);
+  const [hasNextPage, setHasNextPage] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isAuthBusy, setIsAuthBusy] = useState(false);
   const [alert, setAlert] = useState<Alert>(null);
@@ -197,12 +200,21 @@ export default function ManageImagesPage() {
     }
   }
 
-  async function fetchImages(nextPage = page) {
+  async function fetchImages(options?: { after?: string; pageNumber?: number; reset?: boolean }) {
+    const requestedPage = options?.pageNumber || 1;
+    const after = options?.after || '';
+
     setIsLoading(true);
     setAlert(null);
     try {
       const token = currentUser ? await refreshFirebaseToken(currentUser) : firebaseToken;
-      const res = await fetch(`/api/images?scope=${encodeURIComponent(scope)}&page=${nextPage}&limit=24`, {
+      const params = new URLSearchParams({
+        scope,
+        limit: String(pageLimit),
+      });
+      if (after) params.set('after', after);
+
+      const res = await fetch(`/api/images?${params.toString()}`, {
         headers: authHeaders(undefined, token),
       });
       const text = await res.text();
@@ -210,15 +222,57 @@ export default function ManageImagesPage() {
       if (!res.ok) throw new Error(json?.error || 'Failed to fetch images');
 
       setImages(Array.isArray(json.data) ? json.data : []);
-      setPage(Number(json.page) || 1);
-      setTotalPages(Number(json.totalPages) || 1);
+      setPage(requestedPage);
+      setNextCursor(typeof json.nextCursor === 'string' ? json.nextCursor : null);
+      setHasNextPage(Boolean(json.hasNext));
+
+      if (options?.reset) {
+        setCursorHistory(['']);
+      }
     } catch (err: unknown) {
       setAlert({ kind: 'error', text: `Error fetching images: ${getErrorMessage(err)}` });
       setImages([]);
-      setTotalPages(1);
+      setNextCursor(null);
+      setHasNextPage(false);
     } finally {
       setIsLoading(false);
     }
+  }
+
+  function loadFirstPage() {
+    setCursorHistory(['']);
+    fetchImages({ after: '', pageNumber: 1, reset: true });
+  }
+
+  function loadNextPage() {
+    if (!nextCursor) return;
+    const targetPage = page + 1;
+    setCursorHistory((prev) => {
+      const copy = prev.slice(0, targetPage - 1);
+      copy[targetPage - 1] = nextCursor;
+      return copy;
+    });
+    fetchImages({ after: nextCursor, pageNumber: targetPage });
+  }
+
+  function loadPreviousPage() {
+    if (page <= 1) return;
+    const targetPage = page - 1;
+    const after = cursorHistory[targetPage - 1] || '';
+    fetchImages({ after, pageNumber: targetPage });
+  }
+
+  async function loadFullImageDetails(id: string) {
+    const token = currentUser ? await refreshFirebaseToken(currentUser) : firebaseToken;
+    const res = await fetch(`/api/images/${encodeURIComponent(id)}`, {
+      headers: authHeaders(undefined, token),
+    });
+    const text = await res.text();
+    const json = text ? JSON.parse(text) : {};
+    if (!res.ok) throw new Error(json?.error || 'Failed to load image details');
+    const record = json as ImageRecord;
+    setImages((prev) => prev.map((img) => (img._id === id ? { ...img, ...record } : img)));
+    return record;
   }
 
   useEffect(() => {
@@ -257,10 +311,9 @@ export default function ManageImagesPage() {
   }, []);
 
   useEffect(() => {
-    setPage(1);
-    fetchImages(1);
+    loadFirstPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, firebaseToken, adminEmail]);
+  }, [scope, pageLimit, firebaseToken, adminEmail]);
 
   async function saveMeta(id: string, colors: string[], categoriesIds: string[], hasSimplifiedSvg: boolean) {
     setAlert(null);
@@ -277,7 +330,13 @@ export default function ManageImagesPage() {
       const json = text ? JSON.parse(text) : {};
       if (!res.ok) throw new Error(json?.error || 'Failed to update');
 
-      setImages((prev) => prev.map((r) => (r._id === id ? (json.record as ImageRecord) : r)));
+      setImages((prev) =>
+        prev.map((r) =>
+          r._id === id
+            ? { ...r, colors, categories: categoriesIds, hasSimplifiedSvg, updatedAt: new Date().toISOString() }
+            : r
+        )
+      );
       setAlert({ kind: 'success', text: 'Details updated' });
     } catch (err: unknown) {
       setAlert({ kind: 'error', text: `Update failed: ${getErrorMessage(err)}` });
@@ -299,7 +358,10 @@ export default function ManageImagesPage() {
       const json = text ? JSON.parse(text) : {};
       if (!res.ok) throw new Error(json?.error || 'Failed to replace');
 
-      setImages((prev) => prev.map((r) => (r._id === id ? (json.record as ImageRecord) : r)));
+      if (json.record) {
+        setImages((prev) => prev.map((r) => (r._id === id ? { ...r, ...(json.record as ImageRecord) } : r)));
+      }
+      await loadFullImageDetails(id);
       setAlert({ kind: 'success', text: 'Files replaced' });
     } catch (err: unknown) {
       setAlert({ kind: 'error', text: `Replace failed: ${getErrorMessage(err)}` });
@@ -332,7 +394,7 @@ export default function ManageImagesPage() {
     <main>
       <h1>Manage Uploaded Images</h1>
       <p style={{ marginTop: -8 }}>
-        <Link href="/">← Back</Link> · <Link href="/upload-svg">Upload SVG</Link>
+        Browse in small pages. The list API uses cursor pagination and does not run a total-count query on every refresh.
       </p>
 
       {alert && (
@@ -370,32 +432,37 @@ export default function ManageImagesPage() {
         </div>
 
         <div className="row" style={{ marginTop: 12 }}>
-          <button onClick={() => fetchImages(1)} disabled={isLoading}>
+          <label>
+            Per page
+            <div>
+              <select
+                value={pageLimit}
+                onChange={(e) => setPageLimit(Number(e.currentTarget.value) || 12)}
+                style={{ padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: 12, minWidth: 140 }}
+              >
+                <option value={6}>6</option>
+                <option value={12}>12</option>
+                <option value={24}>24</option>
+                <option value={48}>48</option>
+              </select>
+            </div>
+          </label>
+
+          <button onClick={loadFirstPage} disabled={isLoading}>
             {isLoading ? 'Loading…' : 'Refresh'}
           </button>
 
-          <button
-            className="secondary"
-            onClick={() => {
-              const next = Math.max(1, page - 1);
-              fetchImages(next);
-            }}
-            disabled={isLoading || page <= 1}
-          >
+          <button className="secondary" onClick={loadFirstPage} disabled={isLoading || page <= 1}>
+            First
+          </button>
+          <button className="secondary" onClick={loadPreviousPage} disabled={isLoading || page <= 1}>
             Prev
           </button>
-          <button
-            className="secondary"
-            onClick={() => {
-              const next = Math.min(totalPages, page + 1);
-              fetchImages(next);
-            }}
-            disabled={isLoading || page >= totalPages}
-          >
+          <button className="secondary" onClick={loadNextPage} disabled={isLoading || !hasNextPage || !nextCursor}>
             Next
           </button>
           <small>
-            Page {page} / {totalPages}
+            Page {page} · showing up to {pageLimit} records {hasNextPage ? '· more available' : '· end of list'}
           </small>
         </div>
       </div>
@@ -411,6 +478,7 @@ export default function ManageImagesPage() {
               onSaveMeta={saveMeta}
               onReplaceFiles={replaceFiles}
               onDelete={deleteImage}
+              onLoadDetails={loadFullImageDetails}
             />
           ))}
         </div>
@@ -427,6 +495,7 @@ function ImageCard({
   onSaveMeta,
   onReplaceFiles,
   onDelete,
+  onLoadDetails,
 }: {
   img: ImageRecord;
   categories: Category[];
@@ -434,6 +503,7 @@ function ImageCard({
   onSaveMeta: (id: string, colors: string[], categoriesIds: string[], hasSimplifiedSvg: boolean) => Promise<void>;
   onReplaceFiles: (id: string, fd: FormData) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onLoadDetails: (id: string) => Promise<ImageRecord>;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -444,6 +514,8 @@ function ImageCard({
   const [svgFile, setSvgFile] = useState<File | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [detailError, setDetailError] = useState('');
 
   useEffect(() => {
     setColorsText((img.colors || []).join('\n'));
@@ -507,6 +579,23 @@ function ImageCard({
     }
   }
 
+  async function handleToggleOpen() {
+    const nextOpen = !open;
+    setOpen(nextOpen);
+    setDetailError('');
+
+    if (!nextOpen || img.svgData) return;
+
+    setIsLoadingDetails(true);
+    try {
+      await onLoadDetails(img._id);
+    } catch (err: unknown) {
+      setDetailError(getErrorMessage(err));
+    } finally {
+      setIsLoadingDetails(false);
+    }
+  }
+
   return (
     <div className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
@@ -519,14 +608,14 @@ function ImageCard({
             <small>{img.userId ? `Private (userId: ${img.userId})` : 'Public'}</small>
           </div>
         </div>
-        <button className="secondary" onClick={() => setOpen((v) => !v)}>
-          {open ? 'Close' : 'Edit'}
+        <button className="secondary" onClick={handleToggleOpen} disabled={isLoadingDetails}>
+          {isLoadingDetails ? 'Loading…' : open ? 'Close' : 'Edit'}
         </button>
       </div>
 
       {img.pngData ? (
         <div style={{ marginTop: 10 }}>
-          <img className="preview" src={img.pngData} alt="preview" />
+          <img className="preview" src={img.pngData} alt="preview" loading="lazy" decoding="async" />
         </div>
       ) : null}
 
@@ -542,6 +631,7 @@ function ImageCard({
 
       {open && (
         <div style={{ marginTop: 12 }}>
+          {detailError ? <div className="alert error">Could not load full details: {detailError}</div> : null}
           <hr style={{ border: 0, borderTop: '1px solid #e5e7eb', margin: '12px 0' }} />
 
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Edit details</div>
