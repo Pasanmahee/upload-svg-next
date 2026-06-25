@@ -371,3 +371,13 @@ button:disabled {
     background-position: -220% 0;
   }
 }
+
+.svgDownloadBtn {
+  border-color: #111827;
+  background: #111827;
+  color: #ffffff;
+}
+.svgDownloadBtn:hover {
+  background: #374151;
+  border-color: #374151;
+}

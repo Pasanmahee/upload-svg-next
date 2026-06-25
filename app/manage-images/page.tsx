@@ -790,13 +790,31 @@ function ImageCard({
             </small>
           </div>
         </div>
-        <button
-          className="secondary"
-          onClick={handleToggleOpen}
-          disabled={isLoadingDetails}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            alignItems: "flex-end",
+            flexShrink: 0,
+          }}
         >
-          {isLoadingDetails ? "Loading…" : open ? "Close" : "Edit"}
-        </button>
+          <button
+            className="secondary"
+            onClick={handleToggleOpen}
+            disabled={isLoadingDetails}
+          >
+            {isLoadingDetails ? "Loading…" : open ? "Close" : "Edit"}
+          </button>
+          <a
+            className="downloadBtn svgDownloadBtn"
+            href={downloadHref(img._id, "svg")}
+            download
+            aria-label={`Download SVG for image ${img._id}`}
+          >
+            SVG
+          </a>
+        </div>
       </div>
 
       {img.pngData ? (
@@ -824,11 +842,13 @@ function ImageCard({
       )}
 
       <div className="downloadRow" style={{ marginTop: 10 }}>
-        {img.hasSvgData || img.svgData ? (
-          <a className="downloadBtn" href={downloadHref(img._id, "svg")}>
-            Download SVG
-          </a>
-        ) : null}
+        <a
+          className="downloadBtn svgDownloadBtn"
+          href={downloadHref(img._id, "svg")}
+          download
+        >
+          Download SVG
+        </a>
         {Array.isArray(img.colors) && img.colors.length > 0 ? (
           <a className="downloadBtn" href={downloadHref(img._id, "palette")}>
             Download palette
@@ -991,11 +1011,14 @@ function ImageCard({
                 Open SVG
               </a>
             ) : null}
-            {img.hasSvgData || img.svgData ? (
-              <a href={downloadHref(img._id, "svg")} style={{ fontSize: 13 }}>
-                Download SVG
-              </a>
-            ) : null}
+            <a
+              href={downloadHref(img._id, "svg")}
+              download
+              className="downloadBtn svgDownloadBtn"
+              style={{ fontSize: 13 }}
+            >
+              Download SVG
+            </a>
           </div>
         </div>
       )}
