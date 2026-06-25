@@ -227,9 +227,9 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers });
 }
 
-export async function GET(request: Request, ctx: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const headers = setCORSHeaders();
-  const id = ctx?.params?.id;
+  const { id } = await ctx.params;
 
   if (!id || !ObjectId.isValid(id)) {
     return NextResponse.json({ error: 'Invalid id' }, { status: 400, headers });
@@ -276,9 +276,9 @@ export async function GET(request: Request, ctx: { params: { id: string } }) {
  * PATCH /api/images/:id
  * Body: { colors?: string[]|string, categories?: string[]|string, hasSimplifiedSvg?: boolean }
  */
-export async function PATCH(request: Request, ctx: { params: { id: string } }) {
+export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const headers = setCORSHeaders();
-  const id = ctx?.params?.id;
+  const { id } = await ctx.params;
 
   if (!id || !ObjectId.isValid(id)) {
     return NextResponse.json({ error: 'Invalid id' }, { status: 400, headers });
@@ -347,9 +347,9 @@ export async function PATCH(request: Request, ctx: { params: { id: string } }) {
  * - categories?: JSON string | string[]
  * - hasSimplifiedSvg?: boolean
  */
-export async function PUT(request: Request, ctx: { params: { id: string } }) {
+export async function PUT(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const headers = setCORSHeaders();
-  const id = ctx?.params?.id;
+  const { id } = await ctx.params;
 
   if (!id || !ObjectId.isValid(id)) {
     return NextResponse.json({ error: 'Invalid id' }, { status: 400, headers });
