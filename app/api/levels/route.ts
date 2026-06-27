@@ -2,7 +2,8 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { verifyFirebaseAuth } from '@/lib/auth';
-import { GAME_LEVELS, normalizeLevelProgress } from '@/lib/levelSystem';
+import { normalizeLevelProgress } from '@/lib/levelSystem';
+import { getGameConfig } from '@/lib/gameConfig';
 
 export const runtime = 'nodejs';
 
@@ -27,18 +28,19 @@ export async function OPTIONS() {
 export async function GET(request: Request) {
   try {
     const auth = await verifyFirebaseAuth(request);
-    let progress = normalizeLevelProgress(null);
+    const client = await getMongoClient();
+    const db = client.db(getDbName());
+    const config = await getGameConfig(db);
+    let progress = normalizeLevelProgress(null, config.levels);
 
     if (auth.ok) {
-      const client = await getMongoClient();
-      const db = client.db(getDbName());
       const users = db.collection('users');
       const userDoc = await users.findOne({ _id: auth.uid }, { projection: { levelProgress: 1 } });
-      progress = normalizeLevelProgress(userDoc?.levelProgress);
+      progress = normalizeLevelProgress(userDoc?.levelProgress, config.levels);
     }
 
     return json({
-      levels: GAME_LEVELS,
+      levels: config.levels,
       progress: {
         signedIn: auth.ok,
         ...progress,

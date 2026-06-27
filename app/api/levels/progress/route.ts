@@ -3,7 +3,8 @@ import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { verifyFirebaseAuth } from '@/lib/auth';
-import { GAME_LEVELS, calculateUnlockedLevels, getLevelById, isValidLevelId, normalizeLevelProgress } from '@/lib/levelSystem';
+import { calculateUnlockedLevels, getLevelById, isValidLevelId, normalizeLevelProgress } from '@/lib/levelSystem';
+import { getGameConfig } from '@/lib/gameConfig';
 
 export const runtime = 'nodejs';
 
@@ -39,17 +40,18 @@ export async function POST(request: Request) {
   const levelId = String(body?.levelId || '').trim();
   const imageId = String(body?.imageId || '').trim();
 
-  if (!isValidLevelId(levelId)) return json({ error: 'Invalid level id.' }, 400);
-  if (!ObjectId.isValid(imageId)) return json({ error: 'Invalid image id.' }, 400);
-
   try {
     const client = await getMongoClient();
     const db = client.db(getDbName());
-    const users = db.collection('users');
+    const config = await getGameConfig(db);
 
+    if (!isValidLevelId(levelId, config.levels)) return json({ error: 'Invalid level id.' }, 400);
+    if (!ObjectId.isValid(imageId)) return json({ error: 'Invalid image id.' }, 400);
+
+    const users = db.collection('users');
     const now = new Date();
     const userDoc = await users.findOne({ _id: auth.uid }, { projection: { levelProgress: 1 } });
-    const before = normalizeLevelProgress(userDoc?.levelProgress);
+    const before = normalizeLevelProgress(userDoc?.levelProgress, config.levels);
     const beforeUnlocked = new Set(before.unlockedLevelIds || ['beginner']);
 
     const byLevel = { ...(before.completedImagesByLevel || {}) };
@@ -60,7 +62,7 @@ export async function POST(request: Request) {
       completedImagesByLevel: byLevel,
       unlockedLevelIds: before.unlockedLevelIds,
       lastCompletedLevelId: levelId,
-    });
+    }, config.levels);
 
     await users.updateOne(
       { _id: auth.uid },
@@ -75,7 +77,7 @@ export async function POST(request: Request) {
     );
 
     const newlyUnlocked = (progress.unlockedLevelIds || []).find((id: string) => !beforeUnlocked.has(id));
-    const unlockedLevel = newlyUnlocked ? getLevelById(newlyUnlocked) : null;
+    const unlockedLevel = newlyUnlocked ? getLevelById(newlyUnlocked, config.levels) : null;
 
     return json({
       success: true,
@@ -86,7 +88,7 @@ export async function POST(request: Request) {
         ...progress,
       },
       unlockedLevel,
-      levels: GAME_LEVELS,
+      levels: config.levels,
     });
   } catch (e: any) {
     return json({ error: 'Failed to save level progress', details: e?.message || String(e) }, 500);

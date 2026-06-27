@@ -4,14 +4,11 @@ import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { getBucketName, getStorage } from '@/lib/gcs';
 import { verifyFirebaseAuth } from '@/lib/auth';
+import { getGameConfig, getManualDailyImageId } from '@/lib/gameConfig';
 
 export const runtime = 'nodejs';
 
 const SIGNED_URL_TTL_MS = 15 * 60 * 1000;
-const DAILY_REWARD_COINS = Number.parseInt(process.env.DAILY_REWARD_COINS || '50', 10);
-const STREAK_REWARD_DAYS = Number.parseInt(process.env.DAILY_STREAK_REWARD_DAYS || '7', 10);
-const SPECIAL_PACK_ID = process.env.DAILY_SPECIAL_PACK_ID || 'daily-streak-special-pack';
-const SPECIAL_PACK_NAME = process.env.DAILY_SPECIAL_PACK_NAME || 'Special Daily Streak Pack';
 
 type GcsRef = { bucket: string; objectPath: string };
 
@@ -40,7 +37,6 @@ function getErrorMessage(e: unknown): string {
 }
 
 function todayKey(date = new Date()): string {
-  // UTC key keeps every device/server using the same daily challenge.
   return date.toISOString().slice(0, 10);
 }
 
@@ -51,7 +47,6 @@ function addDaysKey(dateKey: string, days: number): string {
 }
 
 function hashDateKey(dateKey: string): number {
-  // Small deterministic hash so the same date always picks the same public puzzle.
   let hash = 2166136261;
   for (let i = 0; i < dateKey.length; i++) {
     hash ^= dateKey.charCodeAt(i);
@@ -85,7 +80,6 @@ function parseGcsObjectRef(value: unknown): GcsRef | null {
     return bucket && objectPath ? { bucket, objectPath } : null;
   }
 
-  // Object path only, using default bucket.
   if (noQuery.includes('://')) return null;
   const objectPath = noQuery.replace(/^\/+/, '');
   return objectPath ? { bucket: getBucketName(), objectPath } : null;
@@ -123,39 +117,54 @@ function toIso(v: any): string | null {
   return String(v);
 }
 
-async function getDailyImage(db: any, challengeDate: string) {
-  const collection = db.collection('svgdata');
-  const baseQuery = { userId: { $exists: false } };
-  const total = await collection.countDocuments(baseQuery);
+function imageProjection() {
+  return {
+    _id: 1,
+    pngData: 1,
+    colors: 1,
+    categories: 1,
+    date: 1,
+    createdAt: 1,
+    levelId: 1,
+    title: 1,
+    name: 1,
+  };
+}
 
-  if (!total) return null;
-
-  const index = hashDateKey(challengeDate) % total;
-  const [doc] = await collection
-    .find(baseQuery, {
-      projection: {
-        _id: 1,
-        pngData: 1,
-        colors: 1,
-        categories: 1,
-        date: 1,
-        createdAt: 1,
-      },
-    })
-    .sort({ date: -1, _id: -1 })
-    .skip(index)
-    .limit(1)
-    .toArray();
-
+async function serializeDailyImage(doc: any) {
   if (!doc) return null;
-
   return {
     _id: doc._id?.toString?.() ?? String(doc._id ?? ''),
     pngData: await signReadUrl(doc.pngData),
     colors: Array.isArray(doc.colors) ? doc.colors : [],
     categories: Array.isArray(doc.categories) ? doc.categories : [],
+    levelId: typeof doc.levelId === 'string' ? doc.levelId : null,
+    title: typeof doc.title === 'string' ? doc.title : typeof doc.name === 'string' ? doc.name : null,
     date: toIso(doc.date || doc.createdAt),
   };
+}
+
+async function getDailyImage(db: any, challengeDate: string, manualImageId?: string | null) {
+  const collection = db.collection('svgdata');
+  const baseQuery = { userId: { $exists: false } };
+
+  if (manualImageId && ObjectId.isValid(manualImageId)) {
+    const doc = await collection.findOne({ ...baseQuery, _id: new ObjectId(manualImageId) }, { projection: imageProjection() });
+    if (doc) return serializeDailyImage(doc);
+  }
+
+  const total = await collection.countDocuments(baseQuery);
+  if (!total) return null;
+
+  const index = hashDateKey(challengeDate) % total;
+  const [doc] = await collection
+    .find(baseQuery, { projection: imageProjection() })
+    .sort({ date: -1, _id: -1 })
+    .skip(index)
+    .limit(1)
+    .toArray();
+
+  return serializeDailyImage(doc);
 }
 
 function normalizeReward(raw: any) {
@@ -177,10 +186,6 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: corsHeaders() });
 }
 
-/**
- * GET /api/daily-challenge
- * Returns today's public puzzle plus the signed-in user's reward/streak state.
- */
 export async function GET(request: Request) {
   try {
     const challengeDate = todayKey();
@@ -189,14 +194,22 @@ export async function GET(request: Request) {
 
     const client = await getMongoClient();
     const db = client.db(getDbName());
-    const image = await getDailyImage(db, challengeDate);
+    const config = await getGameConfig(db);
+    const manualImageId = getManualDailyImageId(config, challengeDate);
+    const image = await getDailyImage(db, challengeDate, manualImageId);
+    const rewardCoins = config.dailyReward.rewardCoins;
+    const streakRewardDays = config.dailyReward.streakRewardDays;
+    const specialPack = {
+      id: config.dailyReward.specialPackId,
+      name: config.dailyReward.specialPackName,
+    };
 
     if (!image) {
       return json({
         challengeDate,
-        rewardCoins: DAILY_REWARD_COINS,
-        streakRewardDays: STREAK_REWARD_DAYS,
-        specialPack: { id: SPECIAL_PACK_ID, name: SPECIAL_PACK_NAME },
+        rewardCoins,
+        streakRewardDays,
+        specialPack,
         image: null,
         status: null,
         message: 'No public images are available for a daily challenge yet.',
@@ -229,9 +242,9 @@ export async function GET(request: Request) {
 
     return json({
       challengeDate,
-      rewardCoins: DAILY_REWARD_COINS,
-      streakRewardDays: STREAK_REWARD_DAYS,
-      specialPack: { id: SPECIAL_PACK_ID, name: SPECIAL_PACK_NAME },
+      rewardCoins,
+      streakRewardDays,
+      specialPack,
       image,
       status,
     });
@@ -240,11 +253,6 @@ export async function GET(request: Request) {
   }
 }
 
-/**
- * POST /api/daily-challenge
- * Body: { imageId, challengeDate }
- * Idempotent: claiming twice on the same date returns the current state without adding coins twice.
- */
 export async function POST(request: Request) {
   const auth = await verifyFirebaseAuth(request);
   if (!auth.ok) return json({ error: 'Unauthorized' }, 401);
@@ -271,7 +279,15 @@ export async function POST(request: Request) {
   try {
     const client = await getMongoClient();
     const db = client.db(getDbName());
-    const expectedImage = await getDailyImage(db, challengeDate);
+    const config = await getGameConfig(db);
+    const manualImageId = getManualDailyImageId(config, challengeDate);
+    const expectedImage = await getDailyImage(db, challengeDate, manualImageId);
+    const rewardCoins = config.dailyReward.rewardCoins;
+    const streakRewardDays = config.dailyReward.streakRewardDays;
+    const specialPack = {
+      id: config.dailyReward.specialPackId,
+      name: config.dailyReward.specialPackName,
+    };
 
     if (!expectedImage || expectedImage._id !== imageId) {
       return json({ error: 'This image is not today\'s challenge.' }, 400);
@@ -292,21 +308,21 @@ export async function POST(request: Request) {
         streak: reward.streak,
         claimedToday: true,
         unlockedSpecialPack: null,
-        specialPack: { id: SPECIAL_PACK_ID, name: SPECIAL_PACK_NAME },
+        specialPack,
       });
     }
 
     const yesterday = addDaysKey(challengeDate, -1);
     const nextStreak = reward.lastClaimDate === yesterday ? reward.streak + 1 : 1;
-    const nextCoins = reward.coins + DAILY_REWARD_COINS;
+    const nextCoins = reward.coins + rewardCoins;
     const claimedDates = Array.from(new Set([...reward.claimedDates.slice(-60), challengeDate]));
 
     let unlockedSpecialPack: { id: string; name: string } | null = null;
     const unlockedSpecialPacks = [...reward.unlockedSpecialPacks];
 
-    if (nextStreak >= STREAK_REWARD_DAYS && !unlockedSpecialPacks.includes(SPECIAL_PACK_ID)) {
-      unlockedSpecialPacks.push(SPECIAL_PACK_ID);
-      unlockedSpecialPack = { id: SPECIAL_PACK_ID, name: SPECIAL_PACK_NAME };
+    if (nextStreak >= streakRewardDays && !unlockedSpecialPacks.includes(specialPack.id)) {
+      unlockedSpecialPacks.push(specialPack.id);
+      unlockedSpecialPack = specialPack;
     }
 
     await users.updateOne(
@@ -332,13 +348,13 @@ export async function POST(request: Request) {
       alreadyClaimed: false,
       message: unlockedSpecialPack
         ? `Daily reward claimed! You unlocked ${unlockedSpecialPack.name}.`
-        : `Daily reward claimed! +${DAILY_REWARD_COINS} coins.`,
-      rewardCoins: DAILY_REWARD_COINS,
+        : `Daily reward claimed! +${rewardCoins} coins.`,
+      rewardCoins,
       totalCoins: nextCoins,
       streak: nextStreak,
       claimedToday: true,
       unlockedSpecialPack,
-      specialPack: { id: SPECIAL_PACK_ID, name: SPECIAL_PACK_NAME },
+      specialPack,
     });
   } catch (e) {
     return json({ error: 'Failed to claim daily reward', details: getErrorMessage(e) }, 500);

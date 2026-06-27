@@ -8,6 +8,7 @@ const navItems = [
   { href: '/', label: 'Process Image' },
   { href: '/upload-svg', label: 'Upload SVG' },
   { href: '/manage-images', label: 'Manage Images' },
+  { href: '/game-settings', label: 'Game Settings' },
 ];
 
 function readCookie(name: string): string {

@@ -3,7 +3,8 @@ import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { getBucketName, getStorage } from '@/lib/gcs';
-import { GAME_LEVELS, getLevelById, inferImageLevelId } from '@/lib/levelSystem';
+import { getLevelById, inferImageLevelId } from '@/lib/levelSystem';
+import { getGameConfig } from '@/lib/gameConfig';
 
 export const runtime = 'nodejs';
 
@@ -115,7 +116,6 @@ function matchesCategory(doc: any, categoryId: string | null): boolean {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const level = getLevelById(searchParams.get('levelId') || 'beginner');
     const pageRaw = Number.parseInt(searchParams.get('page') || '1', 10);
     const limitRaw = Number.parseInt(searchParams.get('limit') || '12', 10);
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
@@ -128,6 +128,8 @@ export async function GET(request: Request) {
 
     const client = await getMongoClient();
     const db = client.db(getDbName());
+    const config = await getGameConfig(db);
+    const level = getLevelById(searchParams.get('levelId') || 'beginner', config.levels);
     const collection = db.collection('svgdata');
     const categoryNameById = await buildCategoryNameMap(db);
 
@@ -145,6 +147,9 @@ export async function GET(request: Request) {
           createdAt: 1,
           updatedAt: 1,
           hasSimplifiedSvg: 1,
+          levelId: 1,
+          title: 1,
+          name: 1,
         },
       })
       .sort({ date: -1, createdAt: -1, _id: -1 })
@@ -152,7 +157,7 @@ export async function GET(request: Request) {
       .toArray();
 
     const assigned = docs
-      .map((doc: any, index: number) => ({ doc, levelId: inferImageLevelId(doc, index, categoryNameById) }))
+      .map((doc: any, index: number) => ({ doc, levelId: inferImageLevelId(doc, index, categoryNameById, config.levels) }))
       .filter((item: any) => item.levelId === level.id && matchesCategory(item.doc, categoryId));
 
     const total = assigned.length;
@@ -168,6 +173,7 @@ export async function GET(request: Request) {
         categories: Array.isArray(doc.categories) ? doc.categories.map((x: any) => String(x?._id ?? x ?? '')) : [],
         colors: Array.isArray(doc.colors) ? doc.colors : [],
         levelId: item.levelId,
+        title: typeof doc.title === 'string' ? doc.title : typeof doc.name === 'string' ? doc.name : null,
         date: toIso(doc.date || doc.createdAt),
         createdAt: toIso(doc.createdAt || doc.date),
         hasSimplifiedSvg: !!doc.hasSimplifiedSvg,
@@ -180,7 +186,7 @@ export async function GET(request: Request) {
       totalPages,
       total,
       level,
-      levels: GAME_LEVELS,
+      levels: config.levels,
     });
   } catch (e: any) {
     return json({ error: 'Failed to load level images', details: e?.message || String(e) }, 500);

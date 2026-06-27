@@ -6,6 +6,8 @@ import { getMongoClient, getDbName } from '@/lib/mongo';
 import { getBucketName, getStorage } from '@/lib/gcs';
 import { type AuthResult, isAdminEmail, verifyFirebaseAuth } from '@/lib/auth';
 import { optimiseRaster } from '@/lib/imageOptimiser';
+import { getGameConfig } from '@/lib/gameConfig';
+import { isValidLevelId } from '@/lib/levelSystem';
 
 export const runtime = 'nodejs';
 
@@ -274,7 +276,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
 
 /**
  * PATCH /api/images/:id
- * Body: { colors?: string[]|string, categories?: string[]|string, hasSimplifiedSvg?: boolean }
+ * Body: { colors?: string[]|string, categories?: string[]|string, hasSimplifiedSvg?: boolean, levelId?: string }
  */
 export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const headers = setCORSHeaders();
@@ -312,13 +314,28 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     const colors = body?.colors !== undefined ? parseColorsFromAny(body.colors) : undefined;
     const categories = body?.categories !== undefined ? parseCategoriesFromAny(body.categories) : undefined;
     const hasSimplifiedSvg = body?.hasSimplifiedSvg !== undefined ? Boolean(body.hasSimplifiedSvg) : undefined;
+    const levelId = body?.levelId !== undefined ? String(body.levelId || '').trim() : undefined;
+
+    if (levelId !== undefined && levelId) {
+      const config = await getGameConfig(db);
+      if (!isValidLevelId(levelId, config.levels)) {
+        return NextResponse.json({ error: 'Invalid level id' }, { status: 400, headers });
+      }
+    }
 
     const update: any = { updatedAt: new Date() };
+    const unset: any = {};
     if (colors !== undefined) update.colors = colors;
     if (categories !== undefined) update.categories = categories;
     if (hasSimplifiedSvg !== undefined) update.hasSimplifiedSvg = hasSimplifiedSvg;
+    if (levelId !== undefined) {
+      if (levelId) update.levelId = levelId;
+      else unset.levelId = '';
+    }
 
-    await collection.updateOne({ _id: new ObjectId(id) }, { $set: update });
+    const mongoUpdate: any = { $set: update };
+    if (Object.keys(unset).length) mongoUpdate.$unset = unset;
+    await collection.updateOne({ _id: new ObjectId(id) }, mongoUpdate);
 
     const updated = await collection.findOne({ _id: new ObjectId(id) });
 
@@ -380,10 +397,18 @@ export async function PUT(request: Request, ctx: { params: Promise<{ id: string 
     const colorsIncoming = form.get('colors');
     const categoriesIncoming = form.get('categories');
     const hasSimplifiedIncoming = form.get('hasSimplifiedSvg');
+    const levelIncoming = form.get('levelId');
 
     const newColors = colorsIncoming !== null ? parseColorsFromAny(colorsIncoming) : (Array.isArray((doc as any).colors) ? (doc as any).colors : []);
     const newCategories = categoriesIncoming !== null ? parseCategoriesFromAny(categoriesIncoming) : (Array.isArray((doc as any).categories) ? (doc as any).categories : []);
     const newHasSimplified = hasSimplifiedIncoming !== null ? toBool(hasSimplifiedIncoming) : Boolean((doc as any).hasSimplifiedSvg);
+    const newLevelId = levelIncoming !== null ? String(levelIncoming || '').trim() : (typeof (doc as any).levelId === 'string' ? (doc as any).levelId : '');
+    if (newLevelId) {
+      const config = await getGameConfig(db);
+      if (!isValidLevelId(newLevelId, config.levels)) {
+        return NextResponse.json({ error: 'Invalid level id' }, { status: 400, headers });
+      }
+    }
 
     const strokeColor = newColors?.[0] || '#000000';
 
@@ -510,6 +535,10 @@ export async function PUT(request: Request, ctx: { params: Promise<{ id: string 
       categories: newCategories,
       hasSimplifiedSvg: newHasSimplified,
     };
+    if (levelIncoming !== null) {
+      if (newLevelId) update.levelId = newLevelId;
+      else update.levelId = null;
+    }
 
     if (hasSvgReplacement) update.svgData = svgDataStored;
     if (hasImageReplacement || webpBuffer) update.pngData = pngDataStored;

@@ -5,6 +5,8 @@ import { Storage } from '@google-cloud/storage';
 import sharp from 'sharp';
 import { getUidIfPresent } from "@/lib/auth";
 import { optimiseRaster } from '@/lib/imageOptimiser';
+import { getGameConfig } from '@/lib/gameConfig';
+import { isValidLevelId } from '@/lib/levelSystem';
 
 export const runtime = 'nodejs';
 
@@ -294,6 +296,7 @@ export async function POST(req: Request) {
         : '';
     const hasSimplifiedSvg = toBool(form.get('hasSimplifiedSvg'));
     const imageFile = form.get('imageFile');
+    const levelId = String(form.get('levelId') || '').trim();
     // Ignore any userId sent by the client (never trust it). Use the verified uid.
     const userId = uid && isValidUserId(uid) ? uid : null;
 
@@ -436,6 +439,13 @@ export async function POST(req: Request) {
     const svgDataCollection = db.collection('svgdata');
     const categoriesCollection = db.collection('categories');
 
+    let safeLevelId = '';
+    if (levelId) {
+      const config = await getGameConfig(db);
+      if (!isValidLevelId(levelId, config.levels)) return json({ message: 'Invalid level id.' }, 400);
+      safeLevelId = levelId;
+    }
+
     // Optional create category
     if (newCategory) {
       const existing = await categoriesCollection.findOne({ name: newCategory });
@@ -463,6 +473,7 @@ export async function POST(req: Request) {
     // Only store userId when it is a valid, non-empty UID.
     // If omitted, this becomes a public/library item.
     if (userId) insertDoc.userId = userId;
+    if (safeLevelId) insertDoc.levelId = safeLevelId;
 
     const insertRes = await svgDataCollection.insertOne(insertDoc);
 
@@ -475,6 +486,7 @@ export async function POST(req: Request) {
         colors: safeColors,
         categories: selectedCategories,
         hasSimplifiedSvg,
+        levelId: safeLevelId || null,
       },
       200
     );

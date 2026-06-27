@@ -177,6 +177,9 @@ export async function GET(request: Request) {
       createdAt: 1,
       updatedAt: 1,
       date: 1,
+      levelId: 1,
+      title: 1,
+      name: 1,
     };
 
     const docs = await collection
@@ -204,6 +207,8 @@ export async function GET(request: Request) {
           createdAt: toIso(d?.createdAt),
           updatedAt: toIso(d?.updatedAt),
           date: toIso(d?.date),
+          levelId: typeof d?.levelId === 'string' ? d.levelId : null,
+          title: typeof d?.title === 'string' ? d.title : typeof d?.name === 'string' ? d.name : null,
         };
       })
     );

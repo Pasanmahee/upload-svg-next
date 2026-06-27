@@ -8,6 +8,12 @@ type Category = {
   name: string;
 };
 
+type GameLevel = {
+  id: string;
+  name: string;
+  emoji: string;
+};
+
 type Alert =
   | { kind: 'success' | 'error' | 'info'; text: string }
   | null;
@@ -70,6 +76,8 @@ export default function UploadSvgPage() {
 
   const [colorsText, setColorsText] = useState('');
   const [hasSimplifiedSvg, setHasSimplifiedSvg] = useState(false);
+  const [levels, setLevels] = useState<GameLevel[]>([]);
+  const [selectedLevelId, setSelectedLevelId] = useState('');
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -95,6 +103,17 @@ export default function UploadSvgPage() {
     const map = new Map(categories.map((c) => [c._id, c] as const));
     return selectedCategoryIds.map((id) => map.get(id)).filter(Boolean) as Category[];
   }, [categories, selectedCategoryIds]);
+
+  async function fetchGameSettings() {
+    try {
+      const res = await fetch('/api/admin/game-config', { method: 'GET' });
+      const json = (await res.json()) as { config?: { levels?: GameLevel[] }; error?: string };
+      if (!res.ok) throw new Error(json?.error || 'Failed to fetch game settings');
+      setLevels(Array.isArray(json.config?.levels) ? json.config!.levels! : []);
+    } catch {
+      setLevels([]);
+    }
+  }
 
   async function fetchCategories() {
     setIsFetchingCategories(true);
@@ -143,6 +162,7 @@ export default function UploadSvgPage() {
 
   useEffect(() => {
     fetchCategories();
+    fetchGameSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -191,6 +211,7 @@ export default function UploadSvgPage() {
       fd.append('categories', JSON.stringify(selectedCategoryIds));
       fd.append('newCategory', ''); // creation is handled by "Add"
       fd.append('hasSimplifiedSvg', String(hasSimplifiedSvg));
+      fd.append('levelId', selectedLevelId);
 
       if (uploadImage && imageFile) {
         fd.append('imageFile', imageFile);
@@ -211,6 +232,7 @@ export default function UploadSvgPage() {
       setColorsText('');
       setSelectedCategoryIds([]);
       setHasSimplifiedSvg(false);
+      setSelectedLevelId('');
       setUploadImage(false);
 
       // ✅ Reset the form using the captured element (NOT e.currentTarget)
@@ -375,6 +397,22 @@ export default function UploadSvgPage() {
 
           <hr style={{ border: 0, borderTop: '1px solid #e5e7eb', margin: '16px 0' }} />
 
+          <h3 className="sectionTitle">Level System</h3>
+          <label style={{ width: '100%' }}>
+            Assign to level
+            <div>
+              <select value={selectedLevelId} onChange={(e) => setSelectedLevelId(e.currentTarget.value)} style={{ width: '100%', minWidth: 0 }}>
+                <option value="">Auto by keywords/categories</option>
+                {levels.map((level) => (
+                  <option key={level.id} value={level.id}>{level.emoji} {level.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="help">You can also change this later from Game Settings.</div>
+          </label>
+
+          <hr style={{ border: 0, borderTop: '1px solid #e5e7eb', margin: '16px 0' }} />
+
           <h3 className="sectionTitle">Categories</h3>
           <div className="row">
             <label style={{ width: '100%' }}>
@@ -482,6 +520,7 @@ export default function UploadSvgPage() {
                 setSelectedCategoryIds([]);
                 setNewCategoryName('');
                 setHasSimplifiedSvg(false);
+                setSelectedLevelId('');
 
                 // ✅ also clears the native file inputs
                 hardResetFormUI();
