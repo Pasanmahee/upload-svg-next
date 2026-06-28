@@ -9,7 +9,7 @@ Added a progression layer to the Library screen.
 3. Flowers
 4. Cartoons
 5. Hard Mandala
-6. Expert Pixel Art
+6. Expert
 
 The first level is unlocked by default. Later levels unlock when the previous level has enough completed pictures.
 

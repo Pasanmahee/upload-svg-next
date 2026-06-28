@@ -18,7 +18,7 @@ Each level can now use an uploaded image instead of an emoji:
 - Flowers
 - Cartoons
 - Hard Mandala
-- Expert Pixel Art
+- Expert
 
 Emoji remains as a fallback only when no image has been uploaded.
 

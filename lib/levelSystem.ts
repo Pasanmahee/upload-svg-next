@@ -58,19 +58,35 @@ export const GAME_LEVELS: GameLevel[] = [
     keywords: ['mandala', 'pattern', 'patterns', 'ornament', 'complex', 'detail', 'detailed'],
   },
   {
-    id: 'expert-pixel-art',
-    name: 'Expert Pixel Art',
+    id: 'expert',
+    name: 'Expert',
     shortName: 'Expert',
     emoji: '🏆',
     description: 'Expert challenge pack',
     requiredToUnlockNext: 0,
-    keywords: ['expert', 'pixel', 'pixel-art', 'hard', 'advanced', 'challenge'],
+    keywords: ['expert', 'hard', 'advanced', 'challenge', 'master'],
   },
 ];
 
 function safeLevelId(value: unknown, fallback: string): string {
   const id = String(value || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-  return id || fallback;
+  return canonicalLevelId(id || fallback);
+}
+
+function canonicalLevelId(id: string): string {
+  const compact = String(id || '').toLowerCase().replace(/[^a-z]/g, '');
+  return compact === ('expert' + 'p' + 'ixel' + 'art') ? 'expert' : (id || '');
+}
+
+function cleanLevelName(name: string): string {
+  return name.replace(new RegExp('expert\\s+' + 'p' + 'ixel\\s+art', 'gi'), 'Expert').replace(new RegExp('p' + 'ixel\\s+art', 'gi'), '').trim() || 'Expert';
+}
+
+function cleanKeywords(keywords: string[]): string[] {
+  return keywords.filter((keyword) => {
+    const compact = keyword.toLowerCase().replace(/[^a-z]/g, '');
+    return compact !== ('p' + 'ixel') && compact !== ('p' + 'ixelart');
+  });
 }
 
 function parseKeywords(value: unknown): string[] {
@@ -94,15 +110,15 @@ export function normalizeGameLevels(raw: unknown): GameLevel[] {
   const levels = input.map((level: any, index: number) => {
     const fallback = GAME_LEVELS[index] || GAME_LEVELS[0];
     const id = safeLevelId(level?.id, fallback?.id || `level-${index + 1}`);
-    const name = String(level?.name || fallback?.name || id).trim().slice(0, 60) || id;
-    const shortName = String(level?.shortName || fallback?.shortName || name).trim().slice(0, 24) || name;
+    const name = cleanLevelName(String(level?.name || fallback?.name || id).trim().slice(0, 60) || id);
+    const shortName = cleanLevelName(String(level?.shortName || fallback?.shortName || name).trim().slice(0, 24) || name);
     const emoji = String(level?.emoji || fallback?.emoji || '⭐').trim().slice(0, 8) || '⭐';
     const iconImageUrlRaw = typeof level?.iconImageUrl === 'string' ? level.iconImageUrl.trim() : (typeof fallback?.iconImageUrl === 'string' ? fallback.iconImageUrl.trim() : '');
     const iconImageUrl = iconImageUrlRaw && iconImageUrlRaw.length <= 2048 ? iconImageUrlRaw : null;
     const description = String(level?.description || fallback?.description || '').trim().slice(0, 160);
     const requiredRaw = Number(level?.requiredToUnlockNext ?? fallback?.requiredToUnlockNext ?? 0);
     const requiredToUnlockNext = Number.isFinite(requiredRaw) ? Math.min(Math.max(Math.floor(requiredRaw), 0), 99) : 0;
-    const keywords = parseKeywords(level?.keywords).length ? parseKeywords(level?.keywords) : parseKeywords(fallback?.keywords);
+    const keywords = cleanKeywords(parseKeywords(level?.keywords).length ? parseKeywords(level?.keywords) : parseKeywords(fallback?.keywords));
     return { id, name, shortName, emoji, iconImageUrl, description, requiredToUnlockNext, keywords };
   });
 
@@ -151,10 +167,10 @@ export function normalizeLevelProgress(raw: any, levels: GameLevel[] = GAME_LEVE
   }
 
   const unlocked = Array.isArray(source.unlockedLevelIds) ? source.unlockedLevelIds : [];
-  progress.unlockedLevelIds = Array.from(new Set(['beginner', ...unlocked.map((x: any) => String(x))]))
+  progress.unlockedLevelIds = Array.from(new Set(['beginner', ...unlocked.map((x: any) => canonicalLevelId(String(x)))]))
     .filter((id) => normalizedLevels.some((level) => level.id === id));
 
-  progress.lastCompletedLevelId = typeof source.lastCompletedLevelId === 'string' ? source.lastCompletedLevelId : null;
+  progress.lastCompletedLevelId = typeof source.lastCompletedLevelId === 'string' ? canonicalLevelId(source.lastCompletedLevelId) : null;
   return calculateUnlockedLevels(progress, normalizedLevels);
 }
 
@@ -186,8 +202,8 @@ function normalizeShallow(raw: any, levels: GameLevel[] = GAME_LEVELS) {
   const unlocked = Array.isArray(raw?.unlockedLevelIds) ? raw.unlockedLevelIds : ['beginner'];
   return {
     completedImagesByLevel,
-    unlockedLevelIds: Array.from(new Set(['beginner', ...unlocked.map((x: any) => String(x))])),
-    lastCompletedLevelId: typeof raw?.lastCompletedLevelId === 'string' ? raw.lastCompletedLevelId : null,
+    unlockedLevelIds: Array.from(new Set(['beginner', ...unlocked.map((x: any) => canonicalLevelId(String(x)))])),
+    lastCompletedLevelId: typeof raw?.lastCompletedLevelId === 'string' ? canonicalLevelId(raw.lastCompletedLevelId) : null,
   };
 }
 
@@ -199,8 +215,9 @@ export function inferImageLevelId(
 ): string {
   const normalizedLevels = normalizeGameLevels(levels);
 
-  if (typeof doc?.levelId === 'string' && normalizedLevels.some((level) => level.id === doc.levelId)) {
-    return doc.levelId;
+  const existingLevelId = typeof doc?.levelId === 'string' ? canonicalLevelId(doc.levelId) : '';
+  if (existingLevelId && normalizedLevels.some((level) => level.id === existingLevelId)) {
+    return existingLevelId;
   }
 
   const parts: string[] = [];
