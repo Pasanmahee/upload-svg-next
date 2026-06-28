@@ -225,7 +225,8 @@ export async function GET(request: Request) {
       const userDoc = await users.findOne({ _id: uid }, { projection: { dailyReward: 1 } });
       const reward = normalizeReward(userDoc?.dailyReward);
       status = {
-        signedIn: true,
+        signedIn: !auth.isAnonymous,
+        isAnonymous: !!auth.isAnonymous,
         claimedToday: reward.claimedDates.includes(challengeDate) || reward.lastClaimDate === challengeDate,
         coins: reward.coins,
         streak: reward.streak,
@@ -235,6 +236,7 @@ export async function GET(request: Request) {
     } else {
       status = {
         signedIn: false,
+        isAnonymous: false,
         claimedToday: false,
         coins: 0,
         streak: 0,
@@ -315,6 +317,7 @@ export async function POST(request: Request) {
         claimedToday: true,
         unlockedSpecialPack: null,
         specialPack,
+        isAnonymous: !!auth.isAnonymous,
       });
     }
 
@@ -361,6 +364,7 @@ export async function POST(request: Request) {
       claimedToday: true,
       unlockedSpecialPack,
       specialPack,
+      isAnonymous: !!auth.isAnonymous,
     });
   } catch (e) {
     return json({ error: 'Failed to claim daily reward', details: getErrorMessage(e) }, 500);

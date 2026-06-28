@@ -136,7 +136,7 @@ function isPublicApiRequest(req: NextRequest): boolean {
   // handlers by Firebase Authorization. The proxy should not require an admin
   // cookie for mobile users, but the route will still reject missing tokens.
   if (method === 'POST') {
-    return pathname === '/api/daily-challenge' || pathname === '/api/levels/progress';
+    return pathname === '/api/daily-challenge' || pathname === '/api/levels/progress' || pathname === '/api/progress/sync';
   }
 
   return false;

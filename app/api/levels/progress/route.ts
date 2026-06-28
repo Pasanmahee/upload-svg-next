@@ -84,7 +84,8 @@ export async function POST(request: Request) {
       levelId,
       imageId,
       progress: {
-        signedIn: true,
+        signedIn: !auth.isAnonymous,
+        isAnonymous: !!auth.isAnonymous,
         ...progress,
       },
       unlockedLevel,

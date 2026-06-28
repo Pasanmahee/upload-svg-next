@@ -8,11 +8,11 @@ export function extractBearerToken(authorizationHeader: string | null): string |
 }
 
 export type AuthResult =
-  | { ok: true; uid: string; email: string | null; name: string | null; provider: 'firebase' | 'admin-email' }
+  | { ok: true; uid: string; email: string | null; name: string | null; provider: 'firebase' | 'admin-email'; isAnonymous?: boolean }
   | { ok: false; error: 'missing_token' | 'invalid_token' };
 
 export type AdminAuthResult =
-  | { ok: true; uid: string; email: string; name: string | null; provider: 'firebase' | 'admin-email' }
+  | { ok: true; uid: string; email: string; name: string | null; provider: 'firebase' | 'admin-email'; isAnonymous?: boolean }
   | { ok: false; status: 401 | 403; error: 'Unauthorized' | 'Forbidden' | 'Admin email is not configured' };
 
 export function normalizeEmail(email: unknown): string | null {
@@ -52,7 +52,7 @@ function safeUidFromEmail(email: string): string {
 
 function authResultFromAdminEmail(email: string): AuthResult {
   if (!isAdminEmail(email)) return { ok: false, error: 'invalid_token' };
-  return { ok: true, uid: safeUidFromEmail(email), email, name: null, provider: 'admin-email' };
+  return { ok: true, uid: safeUidFromEmail(email), email, name: null, provider: 'admin-email', isAnonymous: false };
 }
 
 function verifyAdminEmailFallback(request: Request): AuthResult | null {
@@ -85,12 +85,14 @@ export async function verifyFirebaseAuth(request: Request): Promise<AuthResult> 
     const checkRevoked = process.env.FIREBASE_CHECK_REVOKED === '1';
     const decoded = await auth.verifyIdToken(token, checkRevoked);
     if (!decoded?.uid) return { ok: false, error: 'invalid_token' };
+    const signInProvider = (decoded as any)?.firebase?.sign_in_provider;
     return {
       ok: true,
       uid: decoded.uid,
       email: normalizeEmail(decoded.email) || null,
       name: typeof decoded.name === 'string' ? decoded.name : null,
       provider: 'firebase',
+      isAnonymous: signInProvider === 'anonymous',
     };
   } catch {
     const fallback = verifyAdminEmailFallback(request) || (await verifyAdminSessionCookieFallback(request));

@@ -43,7 +43,8 @@ export async function GET(request: Request) {
     return json({
       levels: config.levels,
       progress: {
-        signedIn: auth.ok,
+        signedIn: auth.ok && !auth.isAnonymous,
+        isAnonymous: auth.ok && !!auth.isAnonymous,
         ...progress,
       },
     });
