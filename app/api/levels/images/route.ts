@@ -4,7 +4,7 @@ import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { getBucketName, getStorage } from '@/lib/gcs';
 import { getLevelById, inferImageLevelId } from '@/lib/levelSystem';
-import { getGameConfig } from '@/lib/gameConfig';
+import { getGameConfig, publicGameConfig } from '@/lib/gameConfig';
 
 export const runtime = 'nodejs';
 
@@ -128,7 +128,8 @@ export async function GET(request: Request) {
 
     const client = await getMongoClient();
     const db = client.db(getDbName());
-    const config = await getGameConfig(db);
+    const rawConfig = await getGameConfig(db);
+    const config = publicGameConfig(rawConfig, new URL(request.url).origin);
     const level = getLevelById(searchParams.get('levelId') || 'beginner', config.levels);
     const collection = db.collection('svgdata');
     const categoryNameById = await buildCategoryNameMap(db);

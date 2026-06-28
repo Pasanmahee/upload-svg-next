@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 
 type GameLevel = {
   id: string;
   name: string;
   shortName: string;
   emoji: string;
+  iconImageUrl?: string | null;
   description: string;
   requiredToUnlockNext: number;
   keywords: string[];
@@ -17,6 +18,8 @@ type DailyRewardConfig = {
   streakRewardDays: number;
   specialPackId: string;
   specialPackName: string;
+  iconImageUrl?: string | null;
+  specialPackImageUrl?: string | null;
   manualImageByDate: Record<string, string>;
 };
 
@@ -35,6 +38,20 @@ type ImageRecord = {
   name?: string | null;
   createdAt?: string;
   date?: string;
+};
+
+type AssetUploadResponse = {
+  ok: boolean;
+  asset?: {
+    id: string;
+    url: string;
+    contentType: string;
+    sizeBytes: number;
+    width: number;
+    height: number;
+  };
+  error?: string;
+  details?: string;
 };
 
 type Alert = { kind: 'success' | 'error' | 'info'; text: string } | null;
@@ -63,6 +80,18 @@ function textToKeywords(value: string): string[] {
   return Array.from(new Set(value.split(/[,\n]/g).map((x) => x.trim().toLowerCase()).filter(Boolean))).slice(0, 40);
 }
 
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  return `${Math.round(bytes / 1024)} KB`;
+}
+
+function assetLabel(url?: string | null): string {
+  if (!url) return 'No image uploaded';
+  const id = url.split('/').filter(Boolean).pop() || 'asset';
+  return id.length > 18 ? `${id.slice(0, 18)}…` : id;
+}
+
 export default function GameSettingsPage() {
   const [config, setConfig] = useState<GameConfig | null>(null);
   const [images, setImages] = useState<ImageRecord[]>([]);
@@ -72,6 +101,7 @@ export default function GameSettingsPage() {
   const [isSavingDaily, setIsSavingDaily] = useState(false);
   const [isSavingLevels, setIsSavingLevels] = useState(false);
   const [savingImageId, setSavingImageId] = useState('');
+  const [uploadingAssetKey, setUploadingAssetKey] = useState('');
 
   const today = useMemo(() => todayKey(), []);
   const selectedDailyImage = useMemo(() => images.find((img) => img._id === dailyImageId) || null, [images, dailyImageId]);
@@ -123,6 +153,52 @@ export default function GameSettingsPage() {
       const levels = prev.levels.map((level, idx) => idx === index ? { ...level, ...patch } : level);
       return { ...prev, levels };
     });
+  }
+
+  async function uploadGameAsset(file: File, purpose: string, assetKey: string): Promise<string> {
+    setUploadingAssetKey(assetKey);
+    setAlert(null);
+    try {
+      const form = new FormData();
+      form.append('image', file);
+      form.append('purpose', purpose);
+      const res = await fetch('/api/admin/game-assets', { method: 'POST', body: form });
+      const json = await res.json() as AssetUploadResponse;
+      if (!res.ok || !json.asset?.url) {
+        throw new Error(json?.error || json?.details || 'Failed to upload image');
+      }
+      setAlert({
+        kind: 'success',
+        text: `Image converted to WebP and compressed (${formatBytes(json.asset.sizeBytes)}). Save settings to apply it.`,
+      });
+      return json.asset.url;
+    } finally {
+      setUploadingAssetKey('');
+    }
+  }
+
+  async function onDailyAssetChange(e: ChangeEvent<HTMLInputElement>, field: 'iconImageUrl' | 'specialPackImageUrl', purpose: string, assetKey: string) {
+    const file = e.currentTarget.files?.[0];
+    e.currentTarget.value = '';
+    if (!file) return;
+    try {
+      const url = await uploadGameAsset(file, purpose, assetKey);
+      updateDailyField(field, url as any);
+    } catch (err: unknown) {
+      setAlert({ kind: 'error', text: getErrorMessage(err) });
+    }
+  }
+
+  async function onLevelAssetChange(e: ChangeEvent<HTMLInputElement>, index: number, levelId: string) {
+    const file = e.currentTarget.files?.[0];
+    e.currentTarget.value = '';
+    if (!file) return;
+    try {
+      const url = await uploadGameAsset(file, `level-${levelId}`, `level-${levelId}`);
+      updateLevel(index, { iconImageUrl: url });
+    } catch (err: unknown) {
+      setAlert({ kind: 'error', text: getErrorMessage(err) });
+    }
   }
 
   async function saveDailySettings() {
@@ -224,9 +300,9 @@ export default function GameSettingsPage() {
               <div>
                 <span className="featureBadge">1</span>
                 <h2>Daily Puzzle / Daily Reward</h2>
-                <p className="help">Set the reward coins, 7-day pack reward, and optionally force today’s puzzle.</p>
+                <p className="help">Set reward coins, special pack reward, daily icon image, and today’s fixed puzzle.</p>
               </div>
-              <button onClick={saveDailySettings} disabled={isSavingDaily}>
+              <button onClick={saveDailySettings} disabled={isSavingDaily || Boolean(uploadingAssetKey)}>
                 {isSavingDaily ? 'Saving…' : 'Save Daily Settings'}
               </button>
             </div>
@@ -270,10 +346,48 @@ export default function GameSettingsPage() {
               </label>
             </div>
 
+            <div className="assetUploadGrid">
+              <div className="assetUploadCard">
+                <div className="assetPreviewBox">
+                  {config.dailyReward.iconImageUrl ? <img src={config.dailyReward.iconImageUrl} alt="Daily challenge icon" /> : <span>Daily</span>}
+                </div>
+                <div>
+                  <strong>Daily challenge image</strong>
+                  <p className="help">Used as the Daily Puzzle / reward badge image. Uploaded files are converted to compressed WebP.</p>
+                  <label className="uploadButton">
+                    {uploadingAssetKey === 'daily-icon' ? 'Compressing…' : 'Upload image'}
+                    <input type="file" accept="image/*" onChange={(e) => onDailyAssetChange(e, 'iconImageUrl', 'daily-challenge-icon', 'daily-icon')} disabled={Boolean(uploadingAssetKey)} />
+                  </label>
+                  {config.dailyReward.iconImageUrl ? (
+                    <button className="secondary smallBtn" onClick={() => updateDailyField('iconImageUrl', null as any)} type="button">Remove</button>
+                  ) : null}
+                  <small>{assetLabel(config.dailyReward.iconImageUrl)}</small>
+                </div>
+              </div>
+
+              <div className="assetUploadCard">
+                <div className="assetPreviewBox">
+                  {config.dailyReward.specialPackImageUrl ? <img src={config.dailyReward.specialPackImageUrl} alt="Special pack reward" /> : <span>Pack</span>}
+                </div>
+                <div>
+                  <strong>7-day special pack image</strong>
+                  <p className="help">Image for the streak unlock reward. Also saved as compressed WebP.</p>
+                  <label className="uploadButton">
+                    {uploadingAssetKey === 'special-pack' ? 'Compressing…' : 'Upload image'}
+                    <input type="file" accept="image/*" onChange={(e) => onDailyAssetChange(e, 'specialPackImageUrl', 'daily-streak-pack-icon', 'special-pack')} disabled={Boolean(uploadingAssetKey)} />
+                  </label>
+                  {config.dailyReward.specialPackImageUrl ? (
+                    <button className="secondary smallBtn" onClick={() => updateDailyField('specialPackImageUrl', null as any)} type="button">Remove</button>
+                  ) : null}
+                  <small>{assetLabel(config.dailyReward.specialPackImageUrl)}</small>
+                </div>
+              </div>
+            </div>
+
             <div className="dailyPicker">
               <div>
                 <h3>Today’s puzzle</h3>
-                <p className="help">Date: <strong>{today}</strong>. Choose a fixed image or leave Auto selection.</p>
+                <p className="help">Date: <strong>{today}</strong>. Choose a fixed coloring image or leave Auto selection.</p>
                 <select value={dailyImageId} onChange={(e) => setDailyImageId(e.currentTarget.value)}>
                   <option value="">Auto select by date</option>
                   {images.map((image) => (
@@ -293,9 +407,9 @@ export default function GameSettingsPage() {
               <div>
                 <span className="featureBadge">2</span>
                 <h2>Level System</h2>
-                <p className="help">Edit level names, unlock rules, and keywords used for automatic image grouping.</p>
+                <p className="help">Edit level images, names, unlock rules, and keywords used for automatic image grouping.</p>
               </div>
-              <button onClick={saveLevels} disabled={isSavingLevels}>
+              <button onClick={saveLevels} disabled={isSavingLevels || Boolean(uploadingAssetKey)}>
                 {isSavingLevels ? 'Saving…' : 'Save Levels'}
               </button>
             </div>
@@ -304,17 +418,34 @@ export default function GameSettingsPage() {
               {config.levels.map((level, index) => (
                 <div className="levelEditorCard" key={level.id}>
                   <div className="levelEditorHead">
-                    <span>{level.emoji}</span>
+                    <span className="levelIconPreview">
+                      {level.iconImageUrl ? <img src={level.iconImageUrl} alt={`${level.name} icon`} /> : level.emoji}
+                    </span>
                     <div>
                       <strong>{level.name}</strong>
                       <small>{level.id}</small>
                     </div>
                   </div>
+
+                  <div className="levelAssetRow">
+                    <div className="assetPreviewBox small">
+                      {level.iconImageUrl ? <img src={level.iconImageUrl} alt={`${level.name} uploaded icon`} /> : <span>{level.emoji}</span>}
+                    </div>
+                    <div>
+                      <strong>Level image</strong>
+                      <p className="help">Upload instead of emoji. It will be converted to compressed WebP.</p>
+                      <label className="uploadButton">
+                        {uploadingAssetKey === `level-${level.id}` ? 'Compressing…' : 'Upload image'}
+                        <input type="file" accept="image/*" onChange={(e) => onLevelAssetChange(e, index, level.id)} disabled={Boolean(uploadingAssetKey)} />
+                      </label>
+                      {level.iconImageUrl ? (
+                        <button className="secondary smallBtn" onClick={() => updateLevel(index, { iconImageUrl: null })} type="button">Remove</button>
+                      ) : null}
+                      <small>{assetLabel(level.iconImageUrl)}</small>
+                    </div>
+                  </div>
+
                   <div className="settingsGrid compact">
-                    <label>
-                      Emoji
-                      <input type="text" value={level.emoji} onChange={(e) => updateLevel(index, { emoji: e.currentTarget.value })} />
-                    </label>
                     <label>
                       Level name
                       <input type="text" value={level.name} onChange={(e) => updateLevel(index, { name: e.currentTarget.value })} />
@@ -358,7 +489,7 @@ export default function GameSettingsPage() {
                   <div className="row" style={{ marginTop: 8 }}>
                     <select value={image.levelId || ''} onChange={(e) => saveImageLevel(image._id, e.currentTarget.value)} disabled={savingImageId === image._id}>
                       <option value="">Auto by keywords</option>
-                      {config.levels.map((level) => <option key={level.id} value={level.id}>{level.emoji} {level.name}</option>)}
+                      {config.levels.map((level) => <option key={level.id} value={level.id}>{level.iconImageUrl ? '🖼️' : level.emoji} {level.name}</option>)}
                     </select>
                   </div>
                 </div>

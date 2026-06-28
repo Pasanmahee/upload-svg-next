@@ -5,6 +5,7 @@ export type GameLevel = {
   name: string;
   shortName: string;
   emoji: string;
+  iconImageUrl?: string | null;
   description: string;
   requiredToUnlockNext: number;
   keywords: string[];
@@ -96,11 +97,13 @@ export function normalizeGameLevels(raw: unknown): GameLevel[] {
     const name = String(level?.name || fallback?.name || id).trim().slice(0, 60) || id;
     const shortName = String(level?.shortName || fallback?.shortName || name).trim().slice(0, 24) || name;
     const emoji = String(level?.emoji || fallback?.emoji || '⭐').trim().slice(0, 8) || '⭐';
+    const iconImageUrlRaw = typeof level?.iconImageUrl === 'string' ? level.iconImageUrl.trim() : (typeof fallback?.iconImageUrl === 'string' ? fallback.iconImageUrl.trim() : '');
+    const iconImageUrl = iconImageUrlRaw && iconImageUrlRaw.length <= 2048 ? iconImageUrlRaw : null;
     const description = String(level?.description || fallback?.description || '').trim().slice(0, 160);
     const requiredRaw = Number(level?.requiredToUnlockNext ?? fallback?.requiredToUnlockNext ?? 0);
     const requiredToUnlockNext = Number.isFinite(requiredRaw) ? Math.min(Math.max(Math.floor(requiredRaw), 0), 99) : 0;
     const keywords = parseKeywords(level?.keywords).length ? parseKeywords(level?.keywords) : parseKeywords(fallback?.keywords);
-    return { id, name, shortName, emoji, description, requiredToUnlockNext, keywords };
+    return { id, name, shortName, emoji, iconImageUrl, description, requiredToUnlockNext, keywords };
   });
 
   const unique: GameLevel[] = [];

@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { verifyFirebaseAuth } from '@/lib/auth';
 import { normalizeLevelProgress } from '@/lib/levelSystem';
-import { getGameConfig } from '@/lib/gameConfig';
+import { getGameConfig, publicGameConfig } from '@/lib/gameConfig';
 
 export const runtime = 'nodejs';
 
@@ -30,7 +30,8 @@ export async function GET(request: Request) {
     const auth = await verifyFirebaseAuth(request);
     const client = await getMongoClient();
     const db = client.db(getDbName());
-    const config = await getGameConfig(db);
+    const rawConfig = await getGameConfig(db);
+    const config = publicGameConfig(rawConfig, new URL(request.url).origin);
     let progress = normalizeLevelProgress(null, config.levels);
 
     if (auth.ok) {

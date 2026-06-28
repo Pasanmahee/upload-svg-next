@@ -4,7 +4,7 @@ import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { getBucketName, getStorage } from '@/lib/gcs';
 import { verifyFirebaseAuth } from '@/lib/auth';
-import { getGameConfig, getManualDailyImageId } from '@/lib/gameConfig';
+import { getGameConfig, getManualDailyImageId, publicGameConfig } from '@/lib/gameConfig';
 
 export const runtime = 'nodejs';
 
@@ -194,7 +194,8 @@ export async function GET(request: Request) {
 
     const client = await getMongoClient();
     const db = client.db(getDbName());
-    const config = await getGameConfig(db);
+    const rawConfig = await getGameConfig(db);
+    const config = publicGameConfig(rawConfig, new URL(request.url).origin);
     const manualImageId = getManualDailyImageId(config, challengeDate);
     const image = await getDailyImage(db, challengeDate, manualImageId);
     const rewardCoins = config.dailyReward.rewardCoins;
@@ -202,6 +203,7 @@ export async function GET(request: Request) {
     const specialPack = {
       id: config.dailyReward.specialPackId,
       name: config.dailyReward.specialPackName,
+      imageUrl: config.dailyReward.specialPackImageUrl || null,
     };
 
     if (!image) {
@@ -209,6 +211,7 @@ export async function GET(request: Request) {
         challengeDate,
         rewardCoins,
         streakRewardDays,
+        dailyIconImageUrl: config.dailyReward.iconImageUrl || null,
         specialPack,
         image: null,
         status: null,
@@ -244,6 +247,7 @@ export async function GET(request: Request) {
       challengeDate,
       rewardCoins,
       streakRewardDays,
+      dailyIconImageUrl: config.dailyReward.iconImageUrl || null,
       specialPack,
       image,
       status,
@@ -279,7 +283,8 @@ export async function POST(request: Request) {
   try {
     const client = await getMongoClient();
     const db = client.db(getDbName());
-    const config = await getGameConfig(db);
+    const rawConfig = await getGameConfig(db);
+    const config = publicGameConfig(rawConfig, new URL(request.url).origin);
     const manualImageId = getManualDailyImageId(config, challengeDate);
     const expectedImage = await getDailyImage(db, challengeDate, manualImageId);
     const rewardCoins = config.dailyReward.rewardCoins;
@@ -287,6 +292,7 @@ export async function POST(request: Request) {
     const specialPack = {
       id: config.dailyReward.specialPackId,
       name: config.dailyReward.specialPackName,
+      imageUrl: config.dailyReward.specialPackImageUrl || null,
     };
 
     if (!expectedImage || expectedImage._id !== imageId) {
@@ -317,7 +323,7 @@ export async function POST(request: Request) {
     const nextCoins = reward.coins + rewardCoins;
     const claimedDates = Array.from(new Set([...reward.claimedDates.slice(-60), challengeDate]));
 
-    let unlockedSpecialPack: { id: string; name: string } | null = null;
+    let unlockedSpecialPack: { id: string; name: string; imageUrl?: string | null } | null = null;
     const unlockedSpecialPacks = [...reward.unlockedSpecialPacks];
 
     if (nextStreak >= streakRewardDays && !unlockedSpecialPacks.includes(specialPack.id)) {

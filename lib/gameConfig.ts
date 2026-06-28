@@ -7,6 +7,8 @@ export type DailyRewardConfig = {
   streakRewardDays: number;
   specialPackId: string;
   specialPackName: string;
+  iconImageUrl?: string | null;
+  specialPackImageUrl?: string | null;
   manualImageByDate: Record<string, string>;
 };
 
@@ -26,6 +28,8 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
     streakRewardDays: Number.parseInt(process.env.DAILY_STREAK_REWARD_DAYS || '7', 10) || 7,
     specialPackId: process.env.DAILY_SPECIAL_PACK_ID || 'daily-streak-special-pack',
     specialPackName: process.env.DAILY_SPECIAL_PACK_NAME || 'Special Daily Streak Pack',
+    iconImageUrl: null,
+    specialPackImageUrl: null,
     manualImageByDate: {},
   },
   levels: GAME_LEVELS,
@@ -42,6 +46,18 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
 function safeText(value: unknown, fallback: string, maxLength: number): string {
   const text = String(value ?? '').trim();
   return (text || fallback).slice(0, maxLength);
+}
+
+
+function safeAssetUrl(value: unknown): string | null {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  if (text.length > 2048) return null;
+  // Store stable local game asset URLs, data URLs, or normal HTTP(S) URLs only.
+  if (text.startsWith('/api/game-assets/')) return text.split('?')[0];
+  if (text.startsWith('data:image/webp;base64,')) return text;
+  if (/^https?:\/\//i.test(text)) return text.split('?')[0];
+  return null;
 }
 
 function isDateKey(value: string): boolean {
@@ -71,6 +87,8 @@ export function normalizeGameConfig(raw: any): GameConfig {
       streakRewardDays: clampInt(daily.streakRewardDays, DEFAULT_GAME_CONFIG.dailyReward.streakRewardDays, 1, 365),
       specialPackId: safeText(daily.specialPackId, DEFAULT_GAME_CONFIG.dailyReward.specialPackId, 80),
       specialPackName: safeText(daily.specialPackName, DEFAULT_GAME_CONFIG.dailyReward.specialPackName, 80),
+      iconImageUrl: safeAssetUrl(daily.iconImageUrl),
+      specialPackImageUrl: safeAssetUrl(daily.specialPackImageUrl),
       manualImageByDate: normalizeManualImageByDate(daily.manualImageByDate),
     },
     levels: normalizeGameLevels(source.levels),
@@ -120,4 +138,25 @@ export async function saveGameConfig(db: Db, patch: Partial<GameConfig>, updated
 
 export function getManualDailyImageId(config: GameConfig, dateKey: string): string | null {
   return config.dailyReward.manualImageByDate?.[dateKey] || null;
+}
+
+function makeAbsoluteAssetUrl(value: string | null | undefined, origin: string): string | null {
+  if (!value) return null;
+  if (value.startsWith('/api/game-assets/')) return `${origin}${value}`;
+  return value;
+}
+
+export function publicGameConfig(config: GameConfig, origin: string): GameConfig {
+  return {
+    ...config,
+    dailyReward: {
+      ...config.dailyReward,
+      iconImageUrl: makeAbsoluteAssetUrl(config.dailyReward.iconImageUrl, origin),
+      specialPackImageUrl: makeAbsoluteAssetUrl(config.dailyReward.specialPackImageUrl, origin),
+    },
+    levels: config.levels.map((level) => ({
+      ...level,
+      iconImageUrl: makeAbsoluteAssetUrl(level.iconImageUrl, origin),
+    })),
+  };
 }
