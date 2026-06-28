@@ -29,6 +29,7 @@ export async function OPTIONS() {
 export async function POST(request: Request) {
   const auth = await verifyFirebaseAuth(request);
   if (!auth.ok) return json({ error: 'Unauthorized' }, 401);
+  const authIsAnonymous = !!auth.isAnonymous;
 
   let body: any = null;
   try {
@@ -84,8 +85,8 @@ export async function POST(request: Request) {
       levelId,
       imageId,
       progress: {
-        signedIn: !auth.isAnonymous,
-        isAnonymous: !!auth.isAnonymous,
+        signedIn: !authIsAnonymous,
+        isAnonymous: authIsAnonymous,
         ...progress,
       },
       unlockedLevel,

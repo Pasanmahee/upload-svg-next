@@ -28,6 +28,7 @@ export async function OPTIONS() {
 export async function GET(request: Request) {
   try {
     const auth = await verifyFirebaseAuth(request);
+    const authIsAnonymous = auth.ok ? !!auth.isAnonymous : false;
     const client = await getMongoClient();
     const db = client.db(getDbName());
     const rawConfig = await getGameConfig(db);
@@ -43,8 +44,8 @@ export async function GET(request: Request) {
     return json({
       levels: config.levels,
       progress: {
-        signedIn: auth.ok && !auth.isAnonymous,
-        isAnonymous: auth.ok && !!auth.isAnonymous,
+        signedIn: auth.ok && !authIsAnonymous,
+        isAnonymous: authIsAnonymous,
         ...progress,
       },
     });

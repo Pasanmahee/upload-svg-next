@@ -190,6 +190,7 @@ export async function GET(request: Request) {
   try {
     const challengeDate = todayKey();
     const auth = await verifyFirebaseAuth(request);
+    const authIsAnonymous = auth.ok ? !!auth.isAnonymous : false;
     const uid = auth.ok ? auth.uid : null;
 
     const client = await getMongoClient();
@@ -225,8 +226,8 @@ export async function GET(request: Request) {
       const userDoc = await users.findOne({ _id: uid }, { projection: { dailyReward: 1 } });
       const reward = normalizeReward(userDoc?.dailyReward);
       status = {
-        signedIn: !auth.isAnonymous,
-        isAnonymous: !!auth.isAnonymous,
+        signedIn: !authIsAnonymous,
+        isAnonymous: authIsAnonymous,
         claimedToday: reward.claimedDates.includes(challengeDate) || reward.lastClaimDate === challengeDate,
         coins: reward.coins,
         streak: reward.streak,
@@ -262,6 +263,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await verifyFirebaseAuth(request);
   if (!auth.ok) return json({ error: 'Unauthorized' }, 401);
+  const authIsAnonymous = !!auth.isAnonymous;
 
   let body: any = null;
   try {
@@ -317,7 +319,7 @@ export async function POST(request: Request) {
         claimedToday: true,
         unlockedSpecialPack: null,
         specialPack,
-        isAnonymous: !!auth.isAnonymous,
+        isAnonymous: authIsAnonymous,
       });
     }
 
@@ -364,7 +366,7 @@ export async function POST(request: Request) {
       claimedToday: true,
       unlockedSpecialPack,
       specialPack,
-      isAnonymous: !!auth.isAnonymous,
+      isAnonymous: authIsAnonymous,
     });
   } catch (e) {
     return json({ error: 'Failed to claim daily reward', details: getErrorMessage(e) }, 500);

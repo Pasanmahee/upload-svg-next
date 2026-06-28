@@ -71,7 +71,7 @@ export async function POST(request: Request) {
   // Cloud sync is intended for real accounts. Anonymous users can already save
   // progress through the normal endpoints under their temporary UID, but they
   // should not be treated as permanent cloud-backup accounts.
-  if (auth.isAnonymous) {
+  if (!!auth.isAnonymous) {
     return json({ error: 'Sign in with Google or email to save progress to your account.' }, 403);
   }
 
