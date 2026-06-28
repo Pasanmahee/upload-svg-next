@@ -69,13 +69,21 @@ export const GAME_LEVELS: GameLevel[] = [
 ];
 
 function safeLevelId(value: unknown, fallback: string): string {
-  const id = String(value || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const id = normalizeLevelId(value);
   return canonicalLevelId(id || fallback);
 }
 
+export function normalizeLevelId(value: unknown): string {
+  const raw = String(value || '').trim().toLowerCase();
+  const compact = raw.replace(/[^a-z]/g, '');
+  if (compact === ('expert' + 'p' + 'ixel' + 'art')) return 'expert';
+  return raw.replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
 function canonicalLevelId(id: string): string {
-  const compact = String(id || '').toLowerCase().replace(/[^a-z]/g, '');
-  return compact === ('expert' + 'p' + 'ixel' + 'art') ? 'expert' : (id || '');
+  const normalized = normalizeLevelId(id);
+  const compact = normalized.toLowerCase().replace(/[^a-z]/g, '');
+  return compact === ('expert' + 'p' + 'ixel' + 'art') ? 'expert' : (normalized || '');
 }
 
 function cleanLevelName(name: string): string {
@@ -216,7 +224,12 @@ export function inferImageLevelId(
   const normalizedLevels = normalizeGameLevels(levels);
 
   const existingLevelId = typeof doc?.levelId === 'string' ? canonicalLevelId(doc.levelId) : '';
-  if (existingLevelId && normalizedLevels.some((level) => level.id === existingLevelId)) {
+  if (existingLevelId) {
+    if (normalizedLevels.some((level) => level.id === existingLevelId)) {
+      return existingLevelId;
+    }
+    // A manual assignment exists but this app/config does not recognise it.
+    // Do not fall back to Beginner by keyword/index; keep it out of other levels.
     return existingLevelId;
   }
 
