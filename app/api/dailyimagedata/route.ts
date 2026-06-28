@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { Storage } from '@google-cloud/storage';
+import { getGameConfig, publicGameConfig } from '@/lib/gameConfig';
+import { inferImageLevelId } from '@/lib/levelSystem';
 
 export const runtime = 'nodejs';
-
 
 // -----------------------------
 // Google Cloud Storage signing
@@ -106,6 +107,7 @@ const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Cache-Control': 'no-store',
 };
 
 function getErrorMessage(e: unknown): string {
@@ -118,17 +120,51 @@ function getErrorMessage(e: unknown): string {
   }
 }
 
+function toIso(v: any): string | null {
+  if (!v) return null;
+  if (typeof v === 'string') return v;
+  if (v instanceof Date) return v.toISOString();
+  try {
+    if (typeof v?.toISOString === 'function') return v.toISOString();
+  } catch {
+    // ignore
+  }
+  return String(v);
+}
+
+async function buildCategoryNameMap(db: any): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  try {
+    const cats = await db.collection('categories').find({}, { projection: { name: 1 } }).toArray();
+    for (const c of cats) {
+      const id = c?._id?.toString?.() ?? String(c?._id ?? '');
+      if (id) map.set(id, String(c?.name || '').toLowerCase());
+    }
+  } catch {
+    // ignore; level fallback still works.
+  }
+  return map;
+}
+
+function parseUnlockedLevelIds(raw: string | null): Set<string> {
+  return new Set(
+    String(raw || '')
+      .split(',')
+      .map((x) => x.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, ''))
+      .filter(Boolean),
+  );
+}
+
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders });
 }
 
 /**
- * GET /api/dailyimagedata?page=1&limit=10&deviceRam=4
+ * GET /api/dailyimagedata?page=1&limit=10&deviceRam=4&unlockedLevelIds=beginner,easy-animals
  *
- * NOTE:
- * - This route must not create DB clients at module scope. Vercel/Next build
- *   may evaluate the module during "Collecting page data", and missing env vars
- *   would crash the build.
+ * Daily Images must respect level locks. When unlockedLevelIds is supplied by the app,
+ * this route filters before pagination so locked Expert/other level images do not appear
+ * on /daily-images.
  */
 export async function GET(request: Request) {
   const headers = corsHeaders;
@@ -142,7 +178,6 @@ export async function GET(request: Request) {
 
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 10;
-    const skip = (page - 1) * limit;
 
     // Device RAM (optional)
     const deviceRamParam = searchParams.get('deviceRam');
@@ -155,71 +190,112 @@ export async function GET(request: Request) {
     const threshold = 5;
     const hasValidRam = Number.isFinite(deviceRam);
     const isLowComplexity = hasValidRam && deviceRam < threshold;
+    const unlockedLevelIds = parseUnlockedLevelIds(searchParams.get('unlockedLevelIds'));
 
     // Connect to MongoDB (via shared helper / cached client)
     const client = await getMongoClient();
     const db = client.db(getDbName());
     const collection = db.collection('svgdata');
+    const rawConfig = await getGameConfig(db);
+    const config = publicGameConfig(rawConfig, new URL(request.url).origin);
+    const categoryNameById = await buildCategoryNameMap(db);
 
-    
-// Daily feed = documents that do NOT have userId (public feed)
-const baseQuery: Record<string, unknown> = {
-  userId: { $exists: false },
-};
+    // Daily feed = documents that do NOT have userId (public feed)
+    const baseQuery: Record<string, unknown> = {
+      userId: { $exists: false },
+    };
 
-const projection = {
-  _id: 1,
-  pngData: 1,
-  date: 1,
-};
+    const projection = {
+      _id: 1,
+      pngData: 1,
+      categories: 1,
+      colors: 1,
+      date: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      hasSimplifiedSvg: 1,
+      levelId: 1,
+      title: 1,
+      name: 1,
+    };
 
-async function fetchPage(query: Record<string, unknown>) {
-  const total = await collection.countDocuments(query);
-  const totalPages = Math.ceil(total / limit);
-
-  const data = await collection
-    .find(query, { projection })
-    .sort({ date: -1, _id: -1 })
-    .skip((page - 1) * limit)
-    .limit(limit)
-    .toArray();
-
-  // Ensure pngData is browser-loadable (sign gs:// or GCS object refs)
-  const signedData = await Promise.all(
-    data.map(async (doc: any) => {
-      if (typeof doc?.pngData === 'string') {
+    async function mapDoc(doc: any, index: number) {
+      let pngData = doc.pngData;
+      if (typeof pngData === 'string') {
         try {
-          doc.pngData = await signReadUrl(doc.pngData);
+          pngData = await signReadUrl(pngData);
         } catch {
           // If signing fails for any reason, fall back to original value
         }
       }
-      return doc;
-    })
-  );
 
-  return { data: signedData, total, totalPages };
-}
+      const levelId = inferImageLevelId(doc, index, categoryNameById, config.levels);
+      return {
+        _id: doc._id?.toString?.() ?? String(doc._id ?? ''),
+        pngData,
+        categories: Array.isArray(doc.categories) ? doc.categories.map((x: any) => String(x?._id ?? x ?? '')) : [],
+        colors: Array.isArray(doc.colors) ? doc.colors : [],
+        levelId,
+        title: typeof doc.title === 'string' ? doc.title : typeof doc.name === 'string' ? doc.name : null,
+        date: toIso(doc.date || doc.createdAt),
+        createdAt: toIso(doc.createdAt || doc.date),
+        hasSimplifiedSvg: !!doc.hasSimplifiedSvg,
+      };
+    }
 
-// Prefer simplified SVGs on low-RAM devices if your docs are flagged accordingly.
-// Fallback: if simplified filter yields nothing, retry without it.
-let query: Record<string, unknown> = { ...baseQuery };
-if (isLowComplexity) query.hasSimplifiedSvg = true;
+    async function fetchFilteredPage(query: Record<string, unknown>) {
+      const docs = await collection
+        .find(query, { projection })
+        .sort({ date: -1, createdAt: -1, _id: -1 })
+        .limit(5000)
+        .toArray();
 
-let result = await fetchPage(query);
-if (isLowComplexity && result.total === 0) {
-  query = { ...baseQuery };
-  result = await fetchPage(query);
-}
+      const assigned = docs
+        .map((doc: any, index: number) => ({ doc, levelId: inferImageLevelId(doc, index, categoryNameById, config.levels) }))
+        .filter((item: any) => unlockedLevelIds.size === 0 || unlockedLevelIds.has(item.levelId));
 
-return NextResponse.json(
-  { data: result.data, page, totalPages: result.totalPages, total: result.total },
-  { headers }
-);
+      const total = assigned.length;
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+      const start = (page - 1) * limit;
+      const pageItems = assigned.slice(start, start + limit);
+      const data = await Promise.all(pageItems.map((item: any, localIndex: number) => mapDoc(item.doc, start + localIndex)));
+      return { data, total, totalPages };
+    }
+
+    async function fetchPlainPage(query: Record<string, unknown>) {
+      const total = await collection.countDocuments(query);
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+
+      const dataDocs = await collection
+        .find(query, { projection })
+        .sort({ date: -1, createdAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .toArray();
+
+      const data = await Promise.all(dataDocs.map((doc: any, index: number) => mapDoc(doc, (page - 1) * limit + index)));
+      return { data, total, totalPages };
+    }
+
+    let query: Record<string, unknown> = { ...baseQuery };
+    if (isLowComplexity) query.hasSimplifiedSvg = true;
+
+    const useLevelLockFilter = unlockedLevelIds.size > 0;
+    let result = useLevelLockFilter ? await fetchFilteredPage(query) : await fetchPlainPage(query);
+
+    if (isLowComplexity && result.total === 0) {
+      query = { ...baseQuery };
+      result = useLevelLockFilter ? await fetchFilteredPage(query) : await fetchPlainPage(query);
+    }
+
+    return NextResponse.json(
+      { data: result.data, page, totalPages: result.totalPages, total: result.total },
+      { headers },
+    );
   } catch (e: unknown) {
     return NextResponse.json(
       { error: getErrorMessage(e) },
-      { status: 500, headers }
+      { status: 500, headers },
     );
   }
 }
