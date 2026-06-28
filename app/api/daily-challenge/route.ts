@@ -221,7 +221,7 @@ export async function GET(request: Request) {
 
     let status: any = null;
     if (uid) {
-      const users = db.collection('users');
+      const users = db.collection<any>('users');
       const userDoc = await users.findOne({ _id: uid }, { projection: { dailyReward: 1 } });
       const reward = normalizeReward(userDoc?.dailyReward);
       status = {
@@ -299,7 +299,7 @@ export async function POST(request: Request) {
       return json({ error: 'This image is not today\'s challenge.' }, 400);
     }
 
-    const users = db.collection('users');
+    const users = db.collection<any>('users');
     const now = new Date();
     const userDoc = await users.findOne({ _id: auth.uid }, { projection: { dailyReward: 1 } });
     const reward = normalizeReward(userDoc?.dailyReward);

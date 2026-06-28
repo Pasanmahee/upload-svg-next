@@ -69,7 +69,7 @@ export async function POST(request: Request) {
 
     const client = await getMongoClient();
     const db = client.db(getDbName());
-    await db.collection('gameAssets').insertOne({
+    await db.collection<any>('gameAssets').insertOne({
       _id: id,
       purpose,
       originalName: safeOriginalName(file.name),

@@ -35,7 +35,7 @@ export async function GET(request: Request) {
     let progress = normalizeLevelProgress(null, config.levels);
 
     if (auth.ok) {
-      const users = db.collection('users');
+      const users = db.collection<any>('users');
       const userDoc = await users.findOne({ _id: auth.uid }, { projection: { levelProgress: 1 } });
       progress = normalizeLevelProgress(userDoc?.levelProgress, config.levels);
     }

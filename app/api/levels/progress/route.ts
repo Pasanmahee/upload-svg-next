@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     if (!isValidLevelId(levelId, config.levels)) return json({ error: 'Invalid level id.' }, 400);
     if (!ObjectId.isValid(imageId)) return json({ error: 'Invalid image id.' }, 400);
 
-    const users = db.collection('users');
+    const users = db.collection<any>('users');
     const now = new Date();
     const userDoc = await users.findOne({ _id: auth.uid }, { projection: { levelProgress: 1 } });
     const before = normalizeLevelProgress(userDoc?.levelProgress, config.levels);

@@ -26,11 +26,11 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
   try {
     const client = await getMongoClient();
     const db = client.db(getDbName());
-    const doc = await db.collection('gameAssets').findOne({ _id: id }, { projection: { data: 1, contentType: 1, sizeBytes: 1, updatedAt: 1, createdAt: 1 } });
+    const doc = await db.collection<any>('gameAssets').findOne({ _id: id }, { projection: { data: 1, contentType: 1, sizeBytes: 1, updatedAt: 1, createdAt: 1 } });
     const buffer = toBuffer(doc?.data);
     if (!doc || !buffer) return new NextResponse('Not found', { status: 404 });
 
-    return new NextResponse(buffer, {
+    return new NextResponse(new Uint8Array(buffer), {
       status: 200,
       headers: {
         'Content-Type': String(doc.contentType || 'image/webp'),

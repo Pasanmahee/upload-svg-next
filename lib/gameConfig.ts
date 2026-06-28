@@ -98,7 +98,7 @@ export function normalizeGameConfig(raw: any): GameConfig {
 }
 
 export async function getGameConfig(db: Db): Promise<GameConfig> {
-  const raw = await db.collection(CONFIG_COLLECTION).findOne({ _id: CONFIG_ID });
+  const raw = await db.collection<any>(CONFIG_COLLECTION).findOne({ _id: CONFIG_ID });
   return normalizeGameConfig(raw);
 }
 
@@ -119,7 +119,7 @@ export async function saveGameConfig(db: Db, patch: Partial<GameConfig>, updated
   });
 
   const now = new Date();
-  await db.collection(CONFIG_COLLECTION).updateOne(
+  await db.collection<any>(CONFIG_COLLECTION).updateOne(
     { _id: CONFIG_ID },
     {
       $set: {
