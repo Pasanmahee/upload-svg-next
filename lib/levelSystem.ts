@@ -254,5 +254,7 @@ export function inferImageLevelId(
     if (level.keywords.some((keyword) => haystack.includes(keyword))) return level.id;
   }
 
-  return normalizedLevels[Math.abs(index) % normalizedLevels.length]?.id || 'beginner';
+  // Do not randomly assign unclassified server images to a level.
+  // Admin /game-settings assignments or keyword matches must decide the level.
+  return '';
 }
