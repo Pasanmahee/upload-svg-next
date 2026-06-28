@@ -112,6 +112,36 @@ function isStaticAsset(pathname: string): boolean {
   );
 }
 
+function isPublicApiRequest(req: NextRequest): boolean {
+  const { pathname } = req.nextUrl;
+  const method = req.method.toUpperCase();
+
+  if (method === 'OPTIONS') return pathname.startsWith('/api/');
+
+  // Public read APIs used by the Android/web app. These must not require the
+  // backend admin browser session; otherwise the public app receives 401 before
+  // the route handler can return daily puzzles, levels, categories, or images.
+  if (method === 'GET') {
+    return (
+      pathname === '/api/images' ||
+      pathname === '/api/categories' ||
+      pathname === '/api/daily-challenge' ||
+      pathname === '/api/levels' ||
+      pathname === '/api/levels/images' ||
+      pathname.startsWith('/api/game-assets/')
+    );
+  }
+
+  // Claiming rewards / saving level progress remains protected inside the route
+  // handlers by Firebase Authorization. The proxy should not require an admin
+  // cookie for mobile users, but the route will still reject missing tokens.
+  if (method === 'POST') {
+    return pathname === '/api/daily-challenge' || pathname === '/api/levels/progress';
+  }
+
+  return false;
+}
+
 export async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
@@ -119,7 +149,7 @@ export async function proxy(req: NextRequest) {
     return new NextResponse(null, { status: 204, headers: corsHeaders });
   }
 
-  if (isStaticAsset(pathname) || pathname === '/login' || pathname.startsWith('/api/auth/')) {
+  if (isStaticAsset(pathname) || pathname === '/login' || pathname.startsWith('/api/auth/') || isPublicApiRequest(req)) {
     const res = NextResponse.next();
     return pathname.startsWith('/api/') ? withCors(res) : res;
   }
