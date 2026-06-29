@@ -14,6 +14,9 @@ import { verifyFirebaseAuth } from '@/lib/auth';
 import { optimiseRaster } from '@/lib/imageOptimiser';
 
 export const runtime = 'nodejs';
+// Image vectorization can take longer than a normal API request.
+// This prevents Vercel from returning a plain-text platform error before our JSON catch block.
+export const maxDuration = 60;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -125,7 +128,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     if (kMeansNrOfClusters) settings.kMeansNrOfClusters = parseInt(kMeansNrOfClusters, 10);
     if (kMeansMinDeltaDifference) settings.kMeansMinDeltaDifference = parseFloat(kMeansMinDeltaDifference);
     if (kMeansClusteringColorSpace) settings.kMeansClusteringColorSpace = parseInt(kMeansClusteringColorSpace, 10);
-    if (kMeansColorRestrictions) settings.kMeansColorRestrictions = JSON.parse(kMeansColorRestrictions);
+    if (kMeansColorRestrictions) {
+      try {
+        settings.kMeansColorRestrictions = JSON.parse(kMeansColorRestrictions);
+      } catch {
+        return json({ error: 'Invalid kMeansColorRestrictions JSON.' }, 400);
+      }
+    }
 
     const maximumNumberOfFacets = form.get('maximumNumberOfFacets')?.toString();
     if (maximumNumberOfFacets) settings.maximumNumberOfFacets = parseInt(maximumNumberOfFacets, 10);

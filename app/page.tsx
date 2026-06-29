@@ -38,7 +38,19 @@ export default function Home() {
         method: 'POST',
         body: fd,
       });
-      const json = (await res.json()) as ProcessResponse;
+
+      // The processing route should return JSON, but hosting platforms can return
+      // plain text/HTML for timeouts or crashes. Read text first so the UI shows
+      // the real server message instead of "Unexpected token ... is not valid JSON".
+      const text = await res.text();
+      let json: ProcessResponse;
+      try {
+        json = text ? (JSON.parse(text) as ProcessResponse) : {};
+      } catch {
+        json = {
+          error: `Backend returned a non-JSON response (${res.status} ${res.statusText || 'Error'}): ${text.slice(0, 500)}`,
+        };
+      }
       setResult(json);
     } catch (e: any) {
       setResult({ error: e?.message || 'Unexpected error' });
