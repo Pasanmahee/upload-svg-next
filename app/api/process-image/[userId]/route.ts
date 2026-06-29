@@ -50,9 +50,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     return json({ error: 'Missing userId in URL.' }, 400);
   }
 
-  let userId: string;
+  let requestedUserId: string;
   try {
-    userId = decodeURIComponent(rawUserId);
+    requestedUserId = decodeURIComponent(rawUserId);
   } catch {
     return json({ error: 'Invalid userId encoding in URL.' }, 400);
   }
@@ -61,8 +61,20 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
   if (!auth.ok) {
     return json({ error: "Unauthorized" }, 401);
   }
-  if (auth.uid !== userId) {
-    return json({ error: "Forbidden" }, 403);
+
+  // Use the verified Firebase/admin UID as the owner.
+  // Older app builds sometimes pass a legacy/local userId in the URL while the
+  // Authorization header belongs to the silent Firebase anonymous user. That
+  // caused a 403 Forbidden even though the token was valid. Do not trust the
+  // URL userId for ownership; keep it only for legacy route compatibility.
+  const userId = auth.uid;
+  if (requestedUserId !== userId) {
+    logger.log('process-image userId mismatch; using authenticated uid', {
+      requestedUserId,
+      authenticatedUid: userId,
+      provider: auth.provider,
+      isAnonymous: !!auth.isAnonymous,
+    });
   }
 
   try {
