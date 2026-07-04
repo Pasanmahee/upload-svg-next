@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { Storage } from '@google-cloud/storage';
+import { getStorage, parseGcsObjectRef } from '@/lib/gcs';
 import { isAdminEmail, verifyFirebaseAuth } from "@/lib/auth";
 
 export const runtime = 'nodejs';
@@ -14,43 +14,8 @@ function isDeleteApiDisabled(): boolean {
 }
 
 
-// -----------------------------
-// Env (server-only)
-// -----------------------------
-function requiredEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing environment variable: ${name}`);
-  return v;
-}
-
-// Required env vars (only needed when delete API is enabled)
-const DELETE_API_DISABLED = isDeleteApiDisabled();
-
-let defaultBucketName = '';
-let storage: Storage | null = null;
-
-// -----------------------------
-// GCS client (service account from base64 JSON)
-// -----------------------------
-type GcpCreds = { project_id?: string; [k: string]: any };
-
-if (!DELETE_API_DISABLED) {
-  defaultBucketName = requiredEnv('GCS_BUCKET');
-  const saKeyB64 = requiredEnv('GCP_SA_KEY_B64');
-
-  let gcpCredentials: GcpCreds;
-  try {
-    const json = Buffer.from(saKeyB64, 'base64').toString('utf8');
-    gcpCredentials = JSON.parse(json) as GcpCreds;
-  } catch {
-    throw new Error('Invalid GCP_SA_KEY_B64: expected base64-encoded service account JSON');
-  }
-
-  storage = new Storage({
-    projectId: gcpCredentials.project_id,
-    credentials: gcpCredentials as any,
-  });
-}
+// GCS operations use the shared lazy helper, so this route no longer requires
+// GCS_BUCKET/GCP_SA_KEY_B64 during build or module import.
 
 // -----------------------------
 // Helpers
@@ -77,48 +42,6 @@ function isValidUserId(userId: unknown): userId is string {
   return typeof userId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(userId);
 }
 
-type GcsRef = { bucket: string; objectPath: string };
-
-/**
- * Accepts:
- *  - https://storage.googleapis.com/<bucket>/<object>[?query]
- *  - gs://<bucket>/<object>
- *  - <object> (object path only; assumes default bucket)
- *  - signed GCS URL (same as storage.googleapis.com URL with query)
- */
-function parseGcsObjectRef(value: string): GcsRef | null {
-  if (!value) return null;
-
-  // Strip querystring (signed URLs)
-  const noQuery = value.split('?')[0];
-
-  if (noQuery.startsWith('gs://')) {
-    const rest = noQuery.slice('gs://'.length);
-    const firstSlash = rest.indexOf('/');
-    if (firstSlash === -1) return null;
-    const bucket = rest.slice(0, firstSlash);
-    const objectPath = rest.slice(firstSlash + 1);
-    if (!bucket || !objectPath) return null;
-    return { bucket, objectPath };
-  }
-
-  const httpsPrefix = 'https://storage.googleapis.com/';
-  if (noQuery.startsWith(httpsPrefix)) {
-    const rest = noQuery.slice(httpsPrefix.length);
-    const firstSlash = rest.indexOf('/');
-    if (firstSlash === -1) return null;
-    const bucket = rest.slice(0, firstSlash);
-    const objectPath = rest.slice(firstSlash + 1);
-    if (!bucket || !objectPath) return null;
-    return { bucket, objectPath };
-  }
-
-  // Treat as object path in default bucket
-  const objectPath = noQuery.replace(/^\/+/, '');
-  if (!objectPath) return null;
-  return { bucket: defaultBucketName, objectPath };
-}
-
 type DeleteResult =
   | { deleted: true; bucket: string; objectPath: string }
   | { deleted: false; reason: 'no_ref' | 'invalid_input'; bucket?: string; objectPath?: string; error?: string };
@@ -132,10 +55,7 @@ async function deleteIfPresent(maybeUrlOrPath: unknown): Promise<DeleteResult> {
   if (!ref) return { deleted: false, reason: 'no_ref' };
 
   try {
-    if (!storage) {
-      return { deleted: false, reason: 'no_ref', bucket: ref.bucket, objectPath: ref.objectPath, error: 'Delete disabled' };
-    }
-    await storage.bucket(ref.bucket).file(ref.objectPath).delete({ ignoreNotFound: true });
+    await getStorage().bucket(ref.bucket).file(ref.objectPath).delete({ ignoreNotFound: true });
     return { deleted: true, bucket: ref.bucket, objectPath: ref.objectPath };
   } catch (err: unknown) {
     return {
@@ -169,7 +89,7 @@ export async function OPTIONS() {
 export async function DELETE(request: Request) {
   const headers = setCORSHeaders();
 
-  if (DELETE_API_DISABLED) {
+  if (isDeleteApiDisabled()) {
     return NextResponse.json({ error: 'Delete image disabled' }, { status: 503, headers });
   }
 

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { Storage } from '@google-cloud/storage';
+import { signGcsReadUrl } from '@/lib/gcs';
 import { getGameConfig, publicGameConfig } from '@/lib/gameConfig';
 import { inferImageLevelId } from '@/lib/levelSystem';
 
@@ -9,99 +9,9 @@ export const runtime = 'nodejs';
 // -----------------------------
 // Google Cloud Storage signing
 // -----------------------------
-function requiredEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing environment variable: ${name}`);
-  return v;
-}
-
-type GcpCreds = {
-  project_id: string;
-  client_email: string;
-  private_key: string;
-};
-
-let gcpCredentials: GcpCreds;
-try {
-  const saKeyB64 = requiredEnv('GCP_SA_KEY_B64');
-  const json = Buffer.from(saKeyB64, 'base64').toString('utf8');
-  gcpCredentials = JSON.parse(json) as GcpCreds;
-} catch {
-  throw new Error('Invalid GCP_SA_KEY_B64: expected base64-encoded service account JSON');
-}
-
-const defaultBucketName = requiredEnv('GCS_BUCKET');
-
-const storage = new Storage({
-  projectId: gcpCredentials.project_id,
-  credentials: gcpCredentials as any,
-});
-
-// 15 minutes
-const SIGNED_URL_TTL_MS = 15 * 60 * 1000;
-
-type GcsRef = { bucket: string; objectPath: string };
-
-/**
- * Accepts:
- *  - https://storage.googleapis.com/<bucket>/<object>
- *  - gs://<bucket>/<object>
- *  - <object> (object path only; assumes default bucket)
- * Returns null for data URLs and non-GCS http(s) urls.
- */
-function parseGcsObjectRef(value: string): GcsRef | null {
-  if (!value) return null;
-
-  // Leave data URLs untouched
-  if (value.startsWith('data:')) return null;
-
-  const noQuery = value.split('?')[0];
-
-  // Signed download URLs from Firebase/other domains: do not re-sign
-  if (noQuery.startsWith('http') && !noQuery.includes('storage.googleapis.com')) return null;
-
-  if (noQuery.startsWith('gs://')) {
-    const rest = noQuery.slice('gs://'.length);
-    const firstSlash = rest.indexOf('/');
-    if (firstSlash <= 0) return null;
-    const bucket = rest.slice(0, firstSlash);
-    const objectPath = rest.slice(firstSlash + 1);
-    if (!objectPath) return null;
-    return { bucket, objectPath };
-  }
-
-  const m = noQuery.match(/^https?:\/\/storage\.googleapis\.com\/([^/]+)\/(.+)$/);
-  if (m) {
-    const bucket = m[1];
-    const objectPath = m[2];
-    if (!objectPath) return null;
-    return { bucket, objectPath };
-  }
-
-  // Treat as object path in default bucket (e.g., "paintbynumbers-svg-123.png")
-  // Only if it doesn't look like a full URL.
-  if (noQuery.includes('://')) return null;
-
-  const objectPath = noQuery.replace(/^\/+/, '');
-  if (!objectPath) return null;
-  return { bucket: defaultBucketName, objectPath };
-}
-
-async function signReadUrl(maybeUrlOrPath: string): Promise<string> {
-  const target = parseGcsObjectRef(maybeUrlOrPath);
-  if (!target) return maybeUrlOrPath;
-
-  const [signedUrl] = await storage
-    .bucket(target.bucket)
-    .file(target.objectPath)
-    .getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + SIGNED_URL_TTL_MS,
-    });
-
-  return signedUrl;
-}
+// Uses the shared lazy GCS helper so this route no longer crashes at module
+// load when GCS credentials are supplied through GOOGLE_APPLICATION_CREDENTIALS
+// or Application Default Credentials instead of GCP_SA_KEY_B64.
 
 const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -223,7 +133,7 @@ export async function GET(request: Request) {
       let pngData = doc.pngData;
       if (typeof pngData === 'string') {
         try {
-          pngData = await signReadUrl(pngData);
+          pngData = await signGcsReadUrl(pngData);
         } catch {
           // If signing fails for any reason, fall back to original value
         }

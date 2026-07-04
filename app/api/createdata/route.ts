@@ -181,7 +181,7 @@ export async function POST(request: Request) {
     const collection = database.collection('svgdata');
 
     // Enforce per-user limit (same env as /api/process-image).
-    const maxPerUser = Number.parseInt(process.env.MAX_RECORDS_PER_USER || '1', 10);
+    const maxPerUser = Number.parseInt(process.env.MAX_RECORDS_PER_USER || '3', 10);
     if (Number.isFinite(maxPerUser) && maxPerUser > 0) {
       const count = await collection.countDocuments({ userId: uid });
       if (count >= maxPerUser) {

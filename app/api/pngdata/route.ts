@@ -2,24 +2,10 @@
 import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { Storage } from '@google-cloud/storage';
+import { signGcsReadUrl } from '@/lib/gcs';
 import { getUidIfPresent } from "@/lib/auth";
 
 export const runtime = 'nodejs';
-
-// -----------------------------
-// Env (server-only)
-// -----------------------------
-function requiredEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing environment variable: ${name}`);
-  return v;
-}
-
-
-// ✅ Make these guaranteed strings (fixes "string | undefined")
-const defaultBucketName: string = requiredEnv('GCS_BUCKET');
-const saKeyB64: string = requiredEnv('GCP_SA_KEY_B64');
 
 // Virtual categories (do NOT store in DB)
 const VIRTUAL_CATEGORY_ALL_ID = 'all';
@@ -29,25 +15,11 @@ const VIRTUAL_CATEGORY_NEW_ID = 'new';
 const NEW_WINDOW_DAYS = Number.parseInt(process.env.NEW_WINDOW_DAYS || '30', 10) || 30;
 
 // -----------------------------
-// GCS (signed URLs)
+// GCS signed URLs
 // -----------------------------
-type GcpCreds = { project_id?: string; [k: string]: any };
-
-let gcpCredentials: GcpCreds;
-try {
-  const json = Buffer.from(saKeyB64, 'base64').toString('utf8');
-  gcpCredentials = JSON.parse(json) as GcpCreds;
-} catch {
-  throw new Error('Invalid GCP_SA_KEY_B64: expected base64-encoded service account JSON');
-}
-
-const storage = new Storage({
-  projectId: gcpCredentials.project_id,
-  credentials: gcpCredentials as any,
-});
-
-// 15 minutes
-const SIGNED_URL_TTL_MS = 15 * 60 * 1000;
+// Uses the shared lazy GCS helper so this legacy route does not require
+// GCS_BUCKET/GCP_SA_KEY_B64 at import time. It can use GCS_BUCKET_NAME,
+// GCS_BUCKET, GCP_SA_KEY_B64, GOOGLE_APPLICATION_CREDENTIALS, or ADC.
 
 function setCORSHeaders() {
   return {
@@ -66,62 +38,6 @@ function getErrorMessage(err: unknown): string {
   } catch {
     return 'Unknown error';
   }
-}
-
-type GcsRef = { bucket: string; objectPath: string };
-
-/**
- * Accepts:
- *  - https://storage.googleapis.com/<bucket>/<object>
- *  - gs://<bucket>/<object>
- *  - <object> (object path only; assumes default bucket)
- */
-function parseGcsObjectRef(value: string): GcsRef | null {
-  if (!value) return null;
-
-  const noQuery = value.split('?')[0];
-
-  if (noQuery.startsWith('gs://')) {
-    const rest = noQuery.slice('gs://'.length);
-    const firstSlash = rest.indexOf('/');
-    if (firstSlash === -1) return null;
-    const bucket = rest.slice(0, firstSlash);
-    const objectPath = rest.slice(firstSlash + 1);
-    if (!bucket || !objectPath) return null;
-    return { bucket, objectPath };
-  }
-
-  const httpsPrefix = 'https://storage.googleapis.com/';
-  if (noQuery.startsWith(httpsPrefix)) {
-    const rest = noQuery.slice(httpsPrefix.length);
-    const firstSlash = rest.indexOf('/');
-    if (firstSlash === -1) return null;
-    const bucket = rest.slice(0, firstSlash);
-    const objectPath = rest.slice(firstSlash + 1);
-    if (!bucket || !objectPath) return null;
-    return { bucket, objectPath };
-  }
-
-  // Treat as object path in default bucket
-  const objectPath = noQuery.replace(/^\/+/, '');
-  if (!objectPath) return null;
-  return { bucket: defaultBucketName, objectPath };
-}
-
-async function signReadUrl(maybeUrlOrPath: string): Promise<string> {
-  const target = parseGcsObjectRef(maybeUrlOrPath);
-  if (!target) return maybeUrlOrPath;
-
-  const [signedUrl] = await storage
-    .bucket(target.bucket)
-    .file(target.objectPath)
-    .getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + SIGNED_URL_TTL_MS,
-    });
-
-  return signedUrl;
 }
 
 // Dedicated OPTIONS handler for CORS preflight
@@ -279,7 +195,7 @@ export async function GET(req: Request) {
       data.map(async (doc: any) => {
         if (!doc?.pngData || typeof doc.pngData !== 'string') return doc;
         try {
-          const pngData = await signReadUrl(doc.pngData);
+          const pngData = await signGcsReadUrl(doc.pngData);
           return { ...doc, pngData };
         } catch {
           return doc;

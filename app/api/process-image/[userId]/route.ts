@@ -94,7 +94,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
 
 
     // Default stays at 3 if env is missing (same as previous behavior).
-    const maxPerUser = Number.parseInt(process.env.MAX_RECORDS_PER_USER || '1', 10);
+    const maxPerUser = Number.parseInt(process.env.MAX_RECORDS_PER_USER || '3', 10);
     let svgDataCollection: any = null;
 
     if (canPersist) {

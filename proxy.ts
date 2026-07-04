@@ -112,6 +112,29 @@ function isStaticAsset(pathname: string): boolean {
   );
 }
 
+
+function hasBearerAuthorization(req: NextRequest): boolean {
+  return (req.headers.get('authorization') || '').toLowerCase().startsWith('bearer ');
+}
+
+function isAdminApiPath(pathname: string): boolean {
+  return pathname.startsWith('/api/admin/') || pathname === '/api/admin';
+}
+
+function isFirebaseAppApiRequest(req: NextRequest): boolean {
+  const { pathname } = req.nextUrl;
+
+  // Do not let a Firebase mobile token bypass admin browser-session routes.
+  if (!pathname.startsWith('/api/') || isAdminApiPath(pathname) || pathname.startsWith('/api/auth/')) {
+    return false;
+  }
+
+  // Mobile/web app APIs use Firebase ID tokens. The proxy should only do a
+  // light pass-through check here; each route handler still verifies the token
+  // and applies its own ownership/privacy rules.
+  return hasBearerAuthorization(req);
+}
+
 function isPublicApiRequest(req: NextRequest): boolean {
   const { pathname } = req.nextUrl;
   const method = req.method.toUpperCase();
@@ -128,6 +151,9 @@ function isPublicApiRequest(req: NextRequest): boolean {
       pathname === '/api/daily-challenge' ||
       pathname === '/api/levels' ||
       pathname === '/api/levels/images' ||
+      pathname === '/api/dailyimagedata' ||
+      pathname === '/api/pngdata' ||
+      pathname === '/api/svgdata' ||
       pathname.startsWith('/api/game-assets/')
     );
   }
@@ -154,7 +180,13 @@ export async function proxy(req: NextRequest) {
     return new NextResponse(null, { status: 204, headers: corsHeaders });
   }
 
-  if (isStaticAsset(pathname) || pathname === '/login' || pathname.startsWith('/api/auth/') || isPublicApiRequest(req)) {
+  if (
+    isStaticAsset(pathname) ||
+    pathname === '/login' ||
+    pathname.startsWith('/api/auth/') ||
+    isPublicApiRequest(req) ||
+    isFirebaseAppApiRequest(req)
+  ) {
     const res = NextResponse.next();
     return pathname.startsWith('/api/') ? withCors(res) : res;
   }
