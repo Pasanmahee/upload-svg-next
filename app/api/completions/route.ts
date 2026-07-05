@@ -5,6 +5,7 @@ import { getMongoClient, getDbName } from '@/lib/mongo';
 import { verifyFirebaseAuth } from '@/lib/auth';
 import { calculateUnlockedLevels, getLevelById, isValidLevelId, normalizeLevelProgress } from '@/lib/levelSystem';
 import { getGameConfig } from '@/lib/gameConfig';
+import { updateUserAchievements } from '@/lib/achievements';
 
 export const runtime = 'nodejs';
 
@@ -310,6 +311,7 @@ export async function POST(request: Request) {
       const levelProgress = normalizeLevelProgress(userDoc?.levelProgress, config.levels);
       const totalCompletions = await completions.countDocuments({ userId: auth.uid });
       const weeklyCompletions = await completions.countDocuments({ userId: auth.uid, completedAt: { $gte: new Date(now.getTime() - SEVEN_DAYS_MS) } });
+      const achievements = await updateUserAchievements(db, auth.uid, config.levels, now);
 
       return json({
         success: true,
@@ -326,6 +328,7 @@ export async function POST(request: Request) {
           isAnonymous: !!auth.isAnonymous,
           ...levelProgress,
         },
+        achievements,
       });
     }
 
@@ -424,6 +427,7 @@ export async function POST(request: Request) {
 
     const weekStart = new Date(now.getTime() - SEVEN_DAYS_MS);
     const weeklyCompletions = await completions.countDocuments({ userId: auth.uid, completedAt: { $gte: weekStart } });
+    const achievements = await updateUserAchievements(db, auth.uid, config.levels, now);
 
     return json({
       success: true,
@@ -443,6 +447,7 @@ export async function POST(request: Request) {
       },
       unlockedLevel,
       levels: config.levels,
+      achievements,
     });
   } catch (e) {
     const message = getErrorMessage(e);
