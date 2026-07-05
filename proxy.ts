@@ -151,6 +151,7 @@ function isPublicApiRequest(req: NextRequest): boolean {
       pathname === '/api/daily-challenge' ||
       pathname === '/api/levels' ||
       pathname === '/api/levels/images' ||
+      pathname === '/api/completions' ||
       pathname === '/api/dailyimagedata' ||
       pathname === '/api/pngdata' ||
       pathname === '/api/svgdata' ||
@@ -166,6 +167,7 @@ function isPublicApiRequest(req: NextRequest): boolean {
       pathname === '/api/daily-challenge' ||
       pathname === '/api/levels/progress' ||
       pathname === '/api/progress/sync' ||
+      pathname === '/api/completions' ||
       pathname.startsWith('/api/process-image/')
     );
   }
