@@ -398,6 +398,7 @@ export async function POST(request: Request) {
       {
         $setOnInsert: { _id: auth.uid, uid: auth.uid, createdAt: now },
         $set: {
+          ...(auth.email ? { email: auth.email, emailLower: auth.email } : {}),
           updatedAt: now,
           levelProgress,
           completionStats: {

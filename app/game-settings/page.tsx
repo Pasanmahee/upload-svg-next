@@ -270,7 +270,7 @@ export default function GameSettingsPage() {
     setHintBusy(true);
     setAlert(null);
     try {
-      const value = hintLookup.trim() || hintTestUser?.uid || hintTestUser?.id || '';
+      const value = hintTestUser?.uid || hintTestUser?.id || hintLookup.trim() || '';
       if (!value) throw new Error('Load a user first or enter a Firebase UID/email.');
       const body = value.includes('@')
         ? { email: value, freeHints: hintFreeCount, coins: hintCoinCount }
@@ -295,7 +295,7 @@ export default function GameSettingsPage() {
     setHintBusy(true);
     setAlert(null);
     try {
-      const value = hintLookup.trim() || hintTestUser?.uid || hintTestUser?.id || '';
+      const value = hintTestUser?.uid || hintTestUser?.id || hintLookup.trim() || '';
       if (!value) throw new Error('Load a user first or enter a Firebase UID/email.');
       const body = value.includes('@')
         ? { email: value, action: 'reset', resetHints: true }

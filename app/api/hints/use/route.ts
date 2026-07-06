@@ -160,7 +160,7 @@ export async function POST(request: Request) {
       { _id: auth.uid },
       {
         $setOnInsert: { _id: auth.uid, uid: auth.uid, createdAt: now },
-        $set: { hintEconomy: nextEconomy, dailyReward: nextReward, updatedAt: now },
+        $set: { ...(auth.email ? { email: auth.email, emailLower: auth.email } : {}), hintEconomy: nextEconomy, dailyReward: nextReward, updatedAt: now },
       },
       { upsert: true }
     );

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
+import { getFirebaseAuth } from '@/lib/firebaseAdmin';
 import { verifyAdminAuth } from '@/lib/auth';
 import {
   ensureHintIndexes,
@@ -13,7 +14,7 @@ import {
 
 export const runtime = 'nodejs';
 
-type UserLookup = { query: Record<string, unknown>; label: string };
+type UserLookup = { query: Record<string, unknown>; label: string; email?: string | null; userId?: string | null };
 
 function headers(): Record<string, string> {
   return {
@@ -42,6 +43,108 @@ function cleanText(value: unknown, maxLength = 180): string {
   return String(value ?? '').trim().slice(0, maxLength);
 }
 
+function normalizeEmailText(value: unknown): string {
+  const cleaned = cleanText(value, 254).toLowerCase();
+  return cleaned.includes('@') ? cleaned : '';
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function emailFieldOrQueries(email: string): Array<Record<string, unknown>> {
+  const exactCaseInsensitive = { $regex: `^${escapeRegExp(email)}$`, $options: 'i' };
+  return [
+    { email },
+    { userEmail: email },
+    { parentEmail: email },
+    { 'profile.email': email },
+    { firebaseEmail: email },
+    { authEmail: email },
+    { emailLower: email },
+    { email: exactCaseInsensitive },
+    { userEmail: exactCaseInsensitive },
+    { parentEmail: exactCaseInsensitive },
+    { 'profile.email': exactCaseInsensitive },
+    { firebaseEmail: exactCaseInsensitive },
+    { authEmail: exactCaseInsensitive },
+    { emailLower: exactCaseInsensitive },
+  ];
+}
+
+async function resolveFirebaseUidByEmail(email: string): Promise<string | null> {
+  try {
+    const user = await getFirebaseAuth().getUserByEmail(email);
+    return user?.uid || null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveUidFromActivity(db: any, email: string): Promise<string | null> {
+  const exactCaseInsensitive = { $regex: `^${escapeRegExp(email)}$`, $options: 'i' };
+  const lookups: Array<{ collection: string; query: Record<string, unknown> }> = [
+    { collection: 'completions', query: { userEmail: exactCaseInsensitive } },
+    { collection: 'hintEvents', query: { userEmail: exactCaseInsensitive } },
+    { collection: 'leaderboardScores', query: { userEmail: exactCaseInsensitive } },
+    { collection: 'scores', query: { userEmail: exactCaseInsensitive } },
+  ];
+
+  for (const lookup of lookups) {
+    try {
+      const doc = await db.collection(lookup.collection).findOne(
+        lookup.query,
+        { projection: { userId: 1 } }
+      );
+      if (doc?.userId) return String(doc.userId);
+    } catch {
+      // Some collections may not exist in older deployments.
+    }
+  }
+
+  return null;
+}
+
+async function findUserDocForLookup(db: any, lookup: UserLookup): Promise<{ userDoc: any | null; resolvedUid: string | null; resolvedEmail: string | null }> {
+  const users = db.collection<any>('users');
+  const query = lookup.query || {};
+  let userDoc = await users.findOne(query);
+  if (userDoc) {
+    return {
+      userDoc,
+      resolvedUid: String(userDoc._id || userDoc.uid || ''),
+      resolvedEmail: normalizeEmailText(userDoc.email || userDoc.userEmail || userDoc.parentEmail || userDoc.profile?.email || userDoc.firebaseEmail || userDoc.authEmail) || null,
+    };
+  }
+
+  const email = typeof lookup.email === 'string' ? lookup.email : null;
+  if (!email) return { userDoc: null, resolvedUid: null, resolvedEmail: null };
+
+  userDoc = await users.findOne({ $or: emailFieldOrQueries(email) });
+  if (userDoc) {
+    return {
+      userDoc,
+      resolvedUid: String(userDoc._id || userDoc.uid || ''),
+      resolvedEmail: email,
+    };
+  }
+
+  const activityUid = await resolveUidFromActivity(db, email);
+  if (activityUid) {
+    userDoc = await users.findOne({ $or: [{ _id: activityUid }, { uid: activityUid }] });
+    if (userDoc) return { userDoc, resolvedUid: activityUid, resolvedEmail: email };
+    return { userDoc: null, resolvedUid: activityUid, resolvedEmail: email };
+  }
+
+  const firebaseUid = await resolveFirebaseUidByEmail(email);
+  if (firebaseUid) {
+    userDoc = await users.findOne({ $or: [{ _id: firebaseUid }, { uid: firebaseUid }] });
+    return { userDoc, resolvedUid: firebaseUid, resolvedEmail: email };
+  }
+
+  return { userDoc: null, resolvedUid: null, resolvedEmail: email };
+}
+
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {
   const raw = Number(value);
   if (!Number.isFinite(raw)) return fallback;
@@ -56,23 +159,17 @@ function userLookupFromParams(params: URLSearchParams): UserLookup | null {
 
 function userLookupFromValues(userId: unknown, email: unknown): UserLookup | null {
   const cleanedUserId = cleanText(userId);
-  const cleanedEmail = cleanText(email).toLowerCase();
+  const cleanedEmail = normalizeEmailText(email);
 
   if (cleanedUserId) {
-    return { query: { $or: [{ _id: cleanedUserId }, { uid: cleanedUserId }] }, label: cleanedUserId };
+    return { query: { $or: [{ _id: cleanedUserId }, { uid: cleanedUserId }] }, label: cleanedUserId, userId: cleanedUserId };
   }
 
-  if (cleanedEmail && cleanedEmail.includes('@')) {
+  if (cleanedEmail) {
     return {
-      query: {
-        $or: [
-          { email: cleanedEmail },
-          { userEmail: cleanedEmail },
-          { parentEmail: cleanedEmail },
-          { 'profile.email': cleanedEmail },
-        ],
-      },
+      query: { $or: emailFieldOrQueries(cleanedEmail) },
       label: cleanedEmail,
+      email: cleanedEmail,
     };
   }
 
@@ -85,7 +182,7 @@ function publicAdminUser(doc: any, config = getHintEconomyConfig()) {
   return {
     id: String(doc?._id || doc?.uid || ''),
     uid: doc?.uid || doc?._id || null,
-    email: doc?.email || doc?.userEmail || doc?.parentEmail || doc?.profile?.email || null,
+    email: doc?.email || doc?.userEmail || doc?.parentEmail || doc?.profile?.email || doc?.firebaseEmail || doc?.authEmail || doc?.emailLower || null,
     playerName: doc?.playerName || doc?.name || doc?.profile?.name || null,
     createdAt: doc?.createdAt || null,
     updatedAt: doc?.updatedAt || null,
@@ -131,13 +228,24 @@ export async function GET(request: Request) {
     const db = client.db(getDbName());
     await ensureHintIndexes(db);
 
-    const userDoc = await db.collection<any>('users').findOne(lookup.query);
+    const resolved = await findUserDocForLookup(db, lookup);
+    let userDoc = resolved.userDoc;
+    if (!userDoc && resolved.resolvedUid) {
+      userDoc = {
+        _id: resolved.resolvedUid,
+        uid: resolved.resolvedUid,
+        email: resolved.resolvedEmail,
+        createdAt: null,
+        updatedAt: null,
+      };
+    }
     if (!userDoc) {
-      return json({ error: `No user found for ${lookup.label}. Use Firebase UID for the most reliable lookup.` }, 404);
+      return json({ error: `No user found for ${lookup.label}. Try Firebase UID, or make sure this email belongs to a Firebase user.` }, 404);
     }
 
+    const eventUserId = String(userDoc._id || userDoc.uid || resolved.resolvedUid || '');
     const events = await db.collection<any>('hintEvents')
-      .find({ userId: userDoc._id })
+      .find({ userId: eventUserId })
       .sort({ createdAt: -1 })
       .limit(20)
       .project({ _id: 0, userId: 0 })
@@ -172,9 +280,20 @@ export async function PATCH(request: Request) {
     await ensureHintIndexes(db);
 
     const users = db.collection<any>('users');
-    const userDoc = await users.findOne(lookup.query);
+    const resolved = await findUserDocForLookup(db, lookup);
+    let userDoc = resolved.userDoc;
+    if (!userDoc && resolved.resolvedUid) {
+      userDoc = {
+        _id: resolved.resolvedUid,
+        uid: resolved.resolvedUid,
+        email: resolved.resolvedEmail,
+        createdAt: new Date(),
+        hintEconomy: null,
+        dailyReward: null,
+      };
+    }
     if (!userDoc) {
-      return json({ error: `No user found for ${lookup.label}.` }, 404);
+      return json({ error: `No user found for ${lookup.label}. Try Firebase UID, or make sure this email belongs to a Firebase user.` }, 404);
     }
 
     const now = new Date();
@@ -224,21 +343,32 @@ export async function PATCH(request: Request) {
       };
     }
 
+    const targetUid = String(userDoc._id || userDoc.uid || resolved.resolvedUid || lookup.userId || '');
+    const resolvedEmail = resolved.resolvedEmail || lookup.email || normalizeEmailText(userDoc.email || userDoc.userEmail || userDoc.parentEmail || userDoc.profile?.email || userDoc.firebaseEmail || userDoc.authEmail) || null;
+
     await users.updateOne(
-      { _id: userDoc._id },
+      { _id: targetUid },
       {
+        $setOnInsert: {
+          _id: targetUid,
+          uid: targetUid,
+          createdAt: now,
+        },
         $set: {
+          ...(resolvedEmail ? { email: resolvedEmail, emailLower: resolvedEmail } : {}),
           hintEconomy: nextEconomy,
           dailyReward: nextReward,
           updatedAt: now,
           lastHintTestUpdatedAt: now,
           lastHintTestUpdatedBy: admin.email,
         },
-      }
+      },
+      { upsert: true }
     );
 
     await db.collection<any>('hintEvents').insertOne({
-      userId: userDoc._id,
+      userId: targetUid,
+      userEmail: resolvedEmail,
       eventType: action === 'reset' || body?.resetHints === true ? 'admin_reset' : 'admin_edit',
       freeHints: nextEconomy.freeHints,
       coins: nextReward.coins,
@@ -247,7 +377,7 @@ export async function PATCH(request: Request) {
       dateKey: todayKey(),
     });
 
-    const nextDoc = await users.findOne({ _id: userDoc._id });
+    const nextDoc = await users.findOne({ _id: targetUid });
     return json({ ok: true, config, user: publicAdminUser(nextDoc, config) });
   } catch (err: unknown) {
     return json({ error: 'Failed to update hint test data', details: getErrorMessage(err) }, 500);
