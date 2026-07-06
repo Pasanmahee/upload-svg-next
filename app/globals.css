@@ -134,9 +134,17 @@ textarea {
 }
 
 .alert {
+  position: fixed;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  width: min(calc(100% - 32px), 960px);
   padding: 12px 14px;
   border-radius: 14px;
   border: 1px solid;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(8px);
 }
 .alert.error {
   background: #fef2f2;
