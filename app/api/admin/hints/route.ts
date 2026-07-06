@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
+import type { Db } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { getFirebaseAuth } from '@/lib/firebaseAdmin';
 import { verifyAdminAuth } from '@/lib/auth';
@@ -81,7 +82,7 @@ async function resolveFirebaseUidByEmail(email: string): Promise<string | null> 
   }
 }
 
-async function resolveUidFromActivity(db: any, email: string): Promise<string | null> {
+async function resolveUidFromActivity(db: Db, email: string): Promise<string | null> {
   const exactCaseInsensitive = { $regex: `^${escapeRegExp(email)}$`, $options: 'i' };
   const lookups: Array<{ collection: string; query: Record<string, unknown> }> = [
     { collection: 'completions', query: { userEmail: exactCaseInsensitive } },
@@ -105,7 +106,7 @@ async function resolveUidFromActivity(db: any, email: string): Promise<string | 
   return null;
 }
 
-async function findUserDocForLookup(db: any, lookup: UserLookup): Promise<{ userDoc: any | null; resolvedUid: string | null; resolvedEmail: string | null }> {
+async function findUserDocForLookup(db: Db, lookup: UserLookup): Promise<{ userDoc: any | null; resolvedUid: string | null; resolvedEmail: string | null }> {
   const users = db.collection<any>('users');
   const query = lookup.query || {};
   let userDoc = await users.findOne(query);
