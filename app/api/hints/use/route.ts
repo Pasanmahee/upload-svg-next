@@ -37,6 +37,18 @@ function getErrorMessage(e: unknown): string {
   try { return JSON.stringify(e); } catch { return 'Unknown error'; }
 }
 
+function cleanOptionalText(value: unknown, maxLength = 40): string | null {
+  const cleaned = String(value ?? '').trim();
+  if (!cleaned) return null;
+  return cleaned.replace(/[^A-Za-z0-9:_./-]/g, '-').slice(0, maxLength) || null;
+}
+
+function cleanOptionalCount(value: unknown): number | null {
+  const count = Number(value);
+  if (!Number.isFinite(count)) return null;
+  return Math.max(0, Math.min(9999, Math.floor(count)));
+}
+
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: headers() });
 }
@@ -57,6 +69,8 @@ export async function POST(request: Request) {
     const imageId = cleanSafeId(body?.imageId, 'imageId', 160);
     const levelId = cleanSafeId(body?.levelId, 'levelId', 80);
     const clientHintId = cleanSafeId(body?.clientHintId ?? body?.idempotencyKey, 'clientHintId', 120);
+    const targetNumber = cleanOptionalText(body?.targetNumber, 40);
+    const targetFacetCount = cleanOptionalCount(body?.targetFacetCount);
     const config = getHintEconomyConfig();
     const client = await getMongoClient();
     const db = client.db(getDbName());
@@ -80,6 +94,8 @@ export async function POST(request: Request) {
             coinsSpent: Number(duplicate.coinsSpent || 0),
             imageId: duplicate.imageId || imageId,
             levelId: duplicate.levelId || levelId,
+            targetNumber: duplicate.targetNumber || targetNumber,
+            targetFacetCount: duplicate.targetFacetCount ?? targetFacetCount,
           },
           status: publicHintStatus(userDoc, !auth.isAnonymous, !!auth.isAnonymous, config),
         });
@@ -132,6 +148,8 @@ export async function POST(request: Request) {
       imageId,
       levelId,
       clientHintId,
+      targetNumber,
+      targetFacetCount,
       spendSource,
       coinsSpent,
       dateKey: today,
@@ -154,7 +172,7 @@ export async function POST(request: Request) {
       success: true,
       duplicate: false,
       spent: true,
-      hint: { type, spendSource, coinsSpent, imageId, levelId },
+      hint: { type, spendSource, coinsSpent, imageId, levelId, targetNumber, targetFacetCount },
       status: publicHintStatus(nextDoc, !auth.isAnonymous, !!auth.isAnonymous, config),
     });
   } catch (e) {

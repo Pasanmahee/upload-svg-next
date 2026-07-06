@@ -52,3 +52,8 @@ Supported types:
 - `auto_fill_area`
 
 The backend records usage in `hintEvents` and stores balances in `users.hintEconomy`.
+
+
+## Frontend hint target metadata
+
+`POST /api/hints/use` now accepts optional `targetNumber` and `targetFacetCount` values. These are saved only as gameplay metadata/analytics; the backend still controls whether a hint can be spent, while the `/home` frontend controls which SVG/canvas areas are visually highlighted or auto-filled.

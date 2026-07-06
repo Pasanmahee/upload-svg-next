@@ -54,6 +54,34 @@ type AssetUploadResponse = {
   details?: string;
 };
 
+type HintTestUser = {
+  id: string;
+  uid?: string | null;
+  email?: string | null;
+  playerName?: string | null;
+  hintStatus: {
+    freeHints: number;
+    coins: number;
+    dailyFreeHints: number;
+    coinCost: number;
+    maxStoredFreeHints: number;
+    canClaimDaily: boolean;
+    claimedToday: boolean;
+    usedToday: number;
+    lifetimeUsed: number;
+    lifetimeClaimed: number;
+    lastClaimDate?: string | null;
+  };
+};
+
+type HintTestResponse = {
+  ok?: boolean;
+  user?: HintTestUser;
+  recentHintEvents?: Array<Record<string, unknown>>;
+  error?: string;
+  details?: string;
+};
+
 type Alert = { kind: 'success' | 'error' | 'info'; text: string } | null;
 
 const todayKey = () => new Date().toISOString().slice(0, 10);
@@ -102,6 +130,12 @@ export default function GameSettingsPage() {
   const [isSavingLevels, setIsSavingLevels] = useState(false);
   const [savingImageId, setSavingImageId] = useState('');
   const [uploadingAssetKey, setUploadingAssetKey] = useState('');
+  const [hintLookup, setHintLookup] = useState('');
+  const [hintFreeCount, setHintFreeCount] = useState('');
+  const [hintCoinCount, setHintCoinCount] = useState('');
+  const [hintTestUser, setHintTestUser] = useState<HintTestUser | null>(null);
+  const [hintEvents, setHintEvents] = useState<Array<Record<string, unknown>>>([]);
+  const [hintBusy, setHintBusy] = useState(false);
 
   const today = useMemo(() => todayKey(), []);
   const selectedDailyImage = useMemo(() => images.find((img) => img._id === dailyImageId) || null, [images, dailyImageId]);
@@ -198,6 +232,87 @@ export default function GameSettingsPage() {
       updateLevel(index, { iconImageUrl: url });
     } catch (err: unknown) {
       setAlert({ kind: 'error', text: getErrorMessage(err) });
+    }
+  }
+
+  function applyHintTestUser(user: HintTestUser | null, events: Array<Record<string, unknown>> = []) {
+    setHintTestUser(user);
+    setHintEvents(events);
+    setHintFreeCount(user ? String(user.hintStatus.freeHints) : '');
+    setHintCoinCount(user ? String(user.hintStatus.coins) : '');
+  }
+
+  function hintLookupQuery() {
+    const value = hintLookup.trim();
+    if (!value) throw new Error('Enter the Firebase UID or email of the test user.');
+    const key = value.includes('@') ? 'email' : 'userId';
+    return `${key}=${encodeURIComponent(value)}`;
+  }
+
+  async function loadHintTestUser() {
+    setHintBusy(true);
+    setAlert(null);
+    try {
+      const res = await fetch(`/api/admin/hints?${hintLookupQuery()}`, { cache: 'no-store' });
+      const json = await res.json() as HintTestResponse;
+      if (!res.ok || !json.user) throw new Error(json?.error || json?.details || 'Failed to load hint test user');
+      applyHintTestUser(json.user, Array.isArray(json.recentHintEvents) ? json.recentHintEvents : []);
+      setAlert({ kind: 'success', text: 'Hint test user loaded.' });
+    } catch (err: unknown) {
+      applyHintTestUser(null);
+      setAlert({ kind: 'error', text: getErrorMessage(err) });
+    } finally {
+      setHintBusy(false);
+    }
+  }
+
+  async function saveHintTestCounts() {
+    setHintBusy(true);
+    setAlert(null);
+    try {
+      const value = hintLookup.trim() || hintTestUser?.uid || hintTestUser?.id || '';
+      if (!value) throw new Error('Load a user first or enter a Firebase UID/email.');
+      const body = value.includes('@')
+        ? { email: value, freeHints: hintFreeCount, coins: hintCoinCount }
+        : { userId: value, freeHints: hintFreeCount, coins: hintCoinCount };
+      const res = await fetch('/api/admin/hints', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json() as HintTestResponse;
+      if (!res.ok || !json.user) throw new Error(json?.error || json?.details || 'Failed to save hint test counts');
+      applyHintTestUser(json.user, hintEvents);
+      setAlert({ kind: 'success', text: 'Hint count updated for testing.' });
+    } catch (err: unknown) {
+      setAlert({ kind: 'error', text: getErrorMessage(err) });
+    } finally {
+      setHintBusy(false);
+    }
+  }
+
+  async function resetHintTestUser() {
+    setHintBusy(true);
+    setAlert(null);
+    try {
+      const value = hintLookup.trim() || hintTestUser?.uid || hintTestUser?.id || '';
+      if (!value) throw new Error('Load a user first or enter a Firebase UID/email.');
+      const body = value.includes('@')
+        ? { email: value, action: 'reset', resetHints: true }
+        : { userId: value, action: 'reset', resetHints: true };
+      const res = await fetch('/api/admin/hints', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json() as HintTestResponse;
+      if (!res.ok || !json.user) throw new Error(json?.error || json?.details || 'Failed to reset hints');
+      applyHintTestUser(json.user, hintEvents);
+      setAlert({ kind: 'success', text: 'Hints reset. The user can claim/use hints again for testing.' });
+    } catch (err: unknown) {
+      setAlert({ kind: 'error', text: getErrorMessage(err) });
+    } finally {
+      setHintBusy(false);
     }
   }
 
@@ -406,6 +521,90 @@ export default function GameSettingsPage() {
             <div className="featureTitleRow">
               <div>
                 <span className="featureBadge">2</span>
+                <h2>Hint Testing</h2>
+                <p className="help">Reset daily hint testing and edit a user’s free hint / coin count from the backend.</p>
+              </div>
+              <button className="secondary" onClick={resetHintTestUser} disabled={hintBusy || !hintLookup.trim()}>
+                Reset Hints
+              </button>
+            </div>
+
+            <div className="settingsGrid">
+              <label>
+                Test user UID or email
+                <input
+                  type="text"
+                  placeholder="Firebase UID is best"
+                  value={hintLookup}
+                  onChange={(e) => setHintLookup(e.currentTarget.value)}
+                />
+              </label>
+              <label>
+                Free hints
+                <input
+                  type="number"
+                  min={0}
+                  max={hintTestUser?.hintStatus.maxStoredFreeHints || 999}
+                  value={hintFreeCount}
+                  onChange={(e) => setHintFreeCount(e.currentTarget.value)}
+                />
+              </label>
+              <label>
+                Coins
+                <input
+                  type="number"
+                  min={0}
+                  max={999999999}
+                  value={hintCoinCount}
+                  onChange={(e) => setHintCoinCount(e.currentTarget.value)}
+                />
+              </label>
+            </div>
+
+            <div className="row" style={{ marginTop: 12 }}>
+              <button onClick={loadHintTestUser} disabled={hintBusy || !hintLookup.trim()}>
+                {hintBusy ? 'Working…' : 'Load Hint Status'}
+              </button>
+              <button onClick={saveHintTestCounts} disabled={hintBusy || !hintLookup.trim()}>
+                Save Hint Count
+              </button>
+              <button className="secondary" onClick={resetHintTestUser} disabled={hintBusy || !hintLookup.trim()}>
+                Reset Today + Free Hints
+              </button>
+            </div>
+
+            {hintTestUser ? (
+              <div className="hintTestSummary" style={{ marginTop: 14 }}>
+                <div>
+                  <strong>{hintTestUser.playerName || hintTestUser.email || hintTestUser.uid || hintTestUser.id}</strong>
+                  <small>{hintTestUser.id}</small>
+                </div>
+                <div className="chips" style={{ marginTop: 10 }}>
+                  <span className="chip">Free hints: <strong>{hintTestUser.hintStatus.freeHints}</strong></span>
+                  <span className="chip">Coins: <strong>{hintTestUser.hintStatus.coins}</strong></span>
+                  <span className="chip">Claim today: <strong>{hintTestUser.hintStatus.claimedToday ? 'Yes' : 'No'}</strong></span>
+                  <span className="chip">Can claim: <strong>{hintTestUser.hintStatus.canClaimDaily ? 'Yes' : 'No'}</strong></span>
+                  <span className="chip">Used today: <strong>{hintTestUser.hintStatus.usedToday}</strong></span>
+                  <span className="chip">Cost: <strong>{hintTestUser.hintStatus.coinCost} coins</strong></span>
+                </div>
+                {hintEvents.length ? (
+                  <details style={{ marginTop: 12 }}>
+                    <summary>Recent hint events</summary>
+                    <pre>{JSON.stringify(hintEvents.slice(0, 8), null, 2)}</pre>
+                  </details>
+                ) : null}
+              </div>
+            ) : (
+              <p className="help" style={{ marginTop: 12 }}>
+                Use this only for testing. Reset sets today’s free hints back to the configured daily amount and clears today’s claim/use lock.
+              </p>
+            )}
+          </section>
+
+          <section className="card featureCard" style={{ marginTop: 16 }}>
+            <div className="featureTitleRow">
+              <div>
+                <span className="featureBadge">3</span>
                 <h2>Level System</h2>
                 <p className="help">Edit level images, names, unlock rules, and keywords used for automatic image grouping.</p>
               </div>
