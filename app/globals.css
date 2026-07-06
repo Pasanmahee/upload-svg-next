@@ -145,6 +145,26 @@ textarea {
   border: 1px solid;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
   backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: auto;
+}
+
+.alertClose {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  margin-left: 12px;
+  opacity: 0.7;
+}
+.alertClose:hover {
+  opacity: 1;
 }
 .alert.error {
   background: #fef2f2;

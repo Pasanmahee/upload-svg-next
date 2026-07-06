@@ -140,6 +140,15 @@ export default function GameSettingsPage() {
   const today = useMemo(() => todayKey(), []);
   const selectedDailyImage = useMemo(() => images.find((img) => img._id === dailyImageId) || null, [images, dailyImageId]);
 
+  useEffect(() => {
+    if (!alert) return;
+    const timeoutMs = alert.kind === 'error' ? 6500 : 3500;
+    const timer = window.setTimeout(() => {
+      setAlert(null);
+    }, timeoutMs);
+    return () => window.clearTimeout(timer);
+  }, [alert]);
+
   async function loadSettings() {
     setIsLoading(true);
     setAlert(null);
@@ -404,7 +413,14 @@ export default function GameSettingsPage() {
         </button>
       </div>
 
-      {alert && <div className={`alert ${alert.kind}`} style={{ marginTop: 14 }}>{alert.text}</div>}
+      {alert && (
+        <div className={`alert ${alert.kind}`} role="status" aria-live="polite">
+          <span>{alert.text}</span>
+          <button className="alertClose" type="button" aria-label="Close message" onClick={() => setAlert(null)}>
+            ×
+          </button>
+        </div>
+      )}
 
       {!config ? (
         <div className="card" style={{ marginTop: 16 }}>Could not load settings.</div>
