@@ -155,6 +155,8 @@ function isPublicApiRequest(req: NextRequest): boolean {
       pathname === '/api/achievements' ||
       pathname === '/api/leaderboards' ||
       pathname === '/api/hints/status' ||
+      pathname === '/api/packs' ||
+      pathname.startsWith('/api/packs/') ||
       pathname === '/api/dailyimagedata' ||
       pathname === '/api/pngdata' ||
       pathname === '/api/svgdata' ||
@@ -175,6 +177,7 @@ function isPublicApiRequest(req: NextRequest): boolean {
       pathname === '/api/scores' ||
       pathname === '/api/hints/use' ||
       pathname === '/api/hints/claim-daily' ||
+      pathname.startsWith('/api/packs/') ||
       pathname.startsWith('/api/process-image/')
     );
   }
