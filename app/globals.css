@@ -862,3 +862,55 @@ input[type="number"] {
     max-height: none;
   }
 }
+
+.levelMapSection {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #dbeafe;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+}
+
+.mappedLevelList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mappedLevelChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #1f2937;
+  font-size: 12px;
+}
+
+.mappedLevelChip button {
+  padding: 4px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.mappedLevelChip button:hover {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+}
+
+.dangerSoft {
+  color: #991b1b;
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.dangerSoft:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}

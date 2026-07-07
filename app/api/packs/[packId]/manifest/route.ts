@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { verifyFirebaseAuth } from '@/lib/auth';
-import { buildPackManifest, cleanPackId, ensureAndSeedPacks, getOwnedPackIds, normalizePackType } from '@/lib/packs';
+import { buildPackManifest, cleanPackId, ensureAndSeedPacks, getOwnedPackIds, normalizePackType, withResolvedPackImages } from '@/lib/packs';
 
 export const runtime = 'nodejs';
 
@@ -33,7 +33,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ packId: str
     const owned = type === 'free' || (await getOwnedPackIds(db, auth.uid)).has(packId);
     if (!owned) return json({ success: false, error: 'Pack is locked.' }, 403);
 
-    const manifest = buildPackManifest(pack, new URL(request.url).origin);
+    const manifest = buildPackManifest(await withResolvedPackImages(db, pack), new URL(request.url).origin);
     return json({ success: true, manifest });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 500);

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { verifyAdminAuth } from '@/lib/auth';
-import { cleanPackId, ensureAndSeedPacks, normalizeImageIds, parseNonNegativeInt, serializePack } from '@/lib/packs';
+import { cleanPackId, ensureAndSeedPacks, normalizeImageIds, parseNonNegativeInt, serializePack, withResolvedPackImages } from '@/lib/packs';
 
 export const runtime = 'nodejs';
 const CORS_HEADERS: Record<string, string> = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Email', 'Cache-Control': 'no-store' };
@@ -31,9 +31,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ packId: st
         },
       }
     );
-    const pack = await db.collection('packs').findOne({ packId });
+    const pack = await withResolvedPackImages(db, await db.collection('packs').findOne({ packId }));
     if (!pack) return json({ success: false, error: 'Pack not found.' }, 404);
-    return json({ success: true, pack: { ...serializePack(pack), imageIds: Array.isArray((pack as any)?.imageIds) ? (pack as any).imageIds : [] } });
+    return json({ success: true, pack: { ...serializePack(pack), imageIds: Array.isArray((pack as any)?.imageIds) ? (pack as any).imageIds : [], resolvedImageIds: Array.isArray((pack as any)?.resolvedImageIds) ? (pack as any).resolvedImageIds : [] } });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 400);
   }

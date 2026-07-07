@@ -14,6 +14,8 @@ export type PackDocument = {
   requiredStreak?: number | null;
   requiredAchievementId?: string | null;
   imageIds: string[];
+  mappedLevelIds?: string[];
+  autoSyncLevelImages?: boolean;
   manifestUrl?: string | null;
   manifestVersion: number;
   sizeBytes: number;
@@ -123,6 +125,18 @@ export function normalizeImageIds(value: unknown): string[] {
   return Array.from(new Set(raw.map((item) => String(item || '').trim()).filter((item) => item && item.length <= 160 && /^[A-Za-z0-9:_./-]+$/.test(item)))).slice(0, 500);
 }
 
+export function normalizeLevelIds(value: unknown): string[] {
+  const raw = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [];
+  return Array.from(
+    new Set(
+      raw
+        .map((item) => String(item || '').trim().toLowerCase())
+        .map((item) => item.replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, ''))
+        .filter((item) => item && item.length <= 80)
+    )
+  ).slice(0, 50);
+}
+
 export function parseNonNegativeInt(value: unknown, fallback = 0, max = 1_000_000_000): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -134,6 +148,7 @@ export async function ensurePackIndexes(db: Db): Promise<void> {
     packIndexesPromise = Promise.all([
       db.collection<any>('packs').createIndex({ packId: 1 }, { unique: true }),
       db.collection<any>('packs').createIndex({ isActive: 1, sortOrder: 1, title: 1 }),
+      db.collection<any>('packs').createIndex({ mappedLevelIds: 1, isActive: 1 }),
       db.collection<any>('packOwnership').createIndex({ userId: 1, packId: 1 }, { unique: true }),
       db.collection<any>('packOwnership').createIndex({ userId: 1, unlockedAt: -1 }),
       db.collection<any>('packDownloads').createIndex({ userId: 1, packId: 1, createdAt: -1 }),
@@ -197,7 +212,10 @@ export function serializePack(pack: any, ownedPackIds: Set<string> = new Set(), 
     priceCoins: parseNonNegativeInt(pack?.priceCoins, 0, 1_000_000),
     requiredStreak: pack?.requiredStreak == null ? null : parseNonNegativeInt(pack.requiredStreak, 0, 3650),
     requiredAchievementId: pack?.requiredAchievementId || null,
-    imageCount: Array.isArray(pack?.imageIds) ? pack.imageIds.length : 0,
+    imageCount: Array.isArray(pack?.resolvedImageIds) ? pack.resolvedImageIds.length : (Array.isArray(pack?.imageIds) ? pack.imageIds.length : 0),
+    manualImageCount: Array.isArray(pack?.imageIds) ? pack.imageIds.length : 0,
+    mappedLevelIds: normalizeLevelIds(pack?.mappedLevelIds),
+    autoSyncLevelImages: pack?.autoSyncLevelImages === true,
     manifestVersion: parseNonNegativeInt(pack?.manifestVersion, 1, 999999),
     sizeBytes: parseNonNegativeInt(pack?.sizeBytes, 0, Number.MAX_SAFE_INTEGER),
     sizeLabel: packSizeLabel(pack?.sizeBytes),
@@ -239,9 +257,52 @@ export async function getDownloadedPackState(db: Db, userId: string | null): Pro
   return out;
 }
 
+
+export async function resolvePackImageIds(db: Db, pack: any): Promise<string[]> {
+  const manualIds = normalizeImageIds(pack?.imageIds);
+  const mappedLevelIds = normalizeLevelIds(pack?.mappedLevelIds);
+  if (pack?.autoSyncLevelImages !== true || !mappedLevelIds.length) return manualIds;
+
+  const docs = await db.collection<any>('svgdata')
+    .find(
+      {
+        userId: { $exists: false },
+        levelId: { $in: mappedLevelIds },
+      },
+      { projection: { _id: 1 } }
+    )
+    .sort({ _id: -1 })
+    .limit(1000)
+    .toArray();
+
+  const levelIds = docs.map((doc: any) => String(doc?._id || '')).filter(Boolean);
+  return Array.from(new Set([...manualIds, ...levelIds]));
+}
+
+export async function withResolvedPackImages(db: Db, pack: any): Promise<any> {
+  if (!pack) return pack;
+  const resolvedImageIds = await resolvePackImageIds(db, pack);
+  return { ...pack, resolvedImageIds };
+}
+
+export async function withResolvedPacksImages(db: Db, packs: any[]): Promise<any[]> {
+  return Promise.all((packs || []).map((pack) => withResolvedPackImages(db, pack)));
+}
+
+export async function getImageIdsForLevel(db: Db, levelId: string): Promise<string[]> {
+  const levelIds = normalizeLevelIds([levelId]);
+  if (!levelIds.length) return [];
+  const docs = await db.collection<any>('svgdata')
+    .find({ userId: { $exists: false }, levelId: levelIds[0] }, { projection: { _id: 1 } })
+    .sort({ _id: -1 })
+    .limit(1000)
+    .toArray();
+  return docs.map((doc: any) => String(doc?._id || '')).filter(Boolean);
+}
+
 export function buildPackManifest(pack: any, baseUrl: string) {
   const origin = baseUrl.replace(/\/$/, '');
-  const imageIds = normalizeImageIds(pack?.imageIds);
+  const imageIds = normalizeImageIds(pack?.resolvedImageIds || pack?.imageIds);
   return {
     packId: String(pack?.packId || ''),
     version: parseNonNegativeInt(pack?.manifestVersion, 1, 999999),
@@ -250,6 +311,8 @@ export function buildPackManifest(pack: any, baseUrl: string) {
     type: normalizePackType(pack?.type),
     sizeBytes: parseNonNegativeInt(pack?.sizeBytes, 0, Number.MAX_SAFE_INTEGER),
     generatedAt: new Date().toISOString(),
+    mappedLevelIds: normalizeLevelIds(pack?.mappedLevelIds),
+    autoSyncLevelImages: pack?.autoSyncLevelImages === true,
     images: imageIds.map((imageId) => ({
       imageId,
       title: imageId,

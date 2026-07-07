@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { verifyAdminAuth } from '@/lib/auth';
-import { cleanPackId, cleanText, ensureAndSeedPacks, normalizeImageIds, normalizePackType, parseNonNegativeInt, serializePack } from '@/lib/packs';
+import { cleanPackId, cleanText, ensureAndSeedPacks, normalizeImageIds, normalizeLevelIds, normalizePackType, parseNonNegativeInt, serializePack, withResolvedPacksImages, withResolvedPackImages } from '@/lib/packs';
 
 export const runtime = 'nodejs';
 const CORS_HEADERS: Record<string, string> = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Email', 'Cache-Control': 'no-store' };
@@ -17,7 +17,8 @@ export async function GET(request: Request) {
     const db = client.db(getDbName());
     await ensureAndSeedPacks(db);
     const packs = await db.collection('packs').find({}).sort({ sortOrder: 1, title: 1 }).toArray();
-    return json({ success: true, packs: packs.map((pack: any) => ({ ...serializePack(pack), imageIds: Array.isArray(pack?.imageIds) ? pack.imageIds : [] })) });
+    const resolvedPacks = await withResolvedPacksImages(db, packs as any[]);
+    return json({ success: true, packs: resolvedPacks.map((pack: any) => ({ ...serializePack(pack), imageIds: Array.isArray(pack?.imageIds) ? pack.imageIds : [], resolvedImageIds: Array.isArray(pack?.resolvedImageIds) ? pack.resolvedImageIds : [] })) });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 500);
   }
@@ -40,6 +41,8 @@ export async function POST(request: Request) {
       requiredStreak: body.requiredStreak == null ? null : parseNonNegativeInt(body.requiredStreak, 0, 3650),
       requiredAchievementId: cleanText(body.requiredAchievementId, 120) || null,
       imageIds: normalizeImageIds(body.imageIds),
+      mappedLevelIds: normalizeLevelIds(body.mappedLevelIds),
+      autoSyncLevelImages: body.autoSyncLevelImages === true,
       manifestUrl: cleanText(body.manifestUrl, 1000) || null,
       manifestVersion: parseNonNegativeInt(body.manifestVersion, 1, 999999),
       sizeBytes: parseNonNegativeInt(body.sizeBytes, 0, Number.MAX_SAFE_INTEGER),
@@ -53,8 +56,8 @@ export async function POST(request: Request) {
     const db = client.db(getDbName());
     await ensureAndSeedPacks(db);
     await db.collection('packs').updateOne({ packId }, { $setOnInsert: { createdAt: now }, $set: doc }, { upsert: true });
-    const pack = await db.collection('packs').findOne({ packId });
-    return json({ success: true, pack: { ...serializePack(pack), imageIds: Array.isArray((pack as any)?.imageIds) ? (pack as any).imageIds : [] } });
+    const pack = await withResolvedPackImages(db, await db.collection('packs').findOne({ packId }));
+    return json({ success: true, pack: { ...serializePack(pack), imageIds: Array.isArray((pack as any)?.imageIds) ? (pack as any).imageIds : [], resolvedImageIds: Array.isArray((pack as any)?.resolvedImageIds) ? (pack as any).resolvedImageIds : [] } });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 400);
   }

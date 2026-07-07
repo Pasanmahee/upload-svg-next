@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { getUidIfPresent } from '@/lib/auth';
-import { cleanPackId, ensureAndSeedPacks, getDownloadedPackState, getOwnedPackIds, serializePack } from '@/lib/packs';
+import { cleanPackId, ensureAndSeedPacks, getDownloadedPackState, getOwnedPackIds, serializePack, withResolvedPackImages } from '@/lib/packs';
 
 export const runtime = 'nodejs';
 
@@ -30,7 +30,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ packId: str
     const uid = await getUidIfPresent(request);
     const ownedPackIds = await getOwnedPackIds(db, uid);
     const downloadedState = await getDownloadedPackState(db, uid);
-    return json({ success: true, pack: serializePack(pack, ownedPackIds, downloadedState.get(packId)) });
+    return json({ success: true, pack: serializePack(await withResolvedPackImages(db, pack), ownedPackIds, downloadedState.get(packId)) });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 500);
   }

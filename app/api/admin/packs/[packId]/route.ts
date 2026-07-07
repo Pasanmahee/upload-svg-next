@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { verifyAdminAuth } from '@/lib/auth';
-import { cleanPackId, cleanText, ensureAndSeedPacks, normalizeImageIds, normalizePackType, parseNonNegativeInt, serializePack } from '@/lib/packs';
+import { cleanPackId, cleanText, ensureAndSeedPacks, normalizeImageIds, normalizeLevelIds, normalizePackType, parseNonNegativeInt, serializePack, withResolvedPackImages } from '@/lib/packs';
 
 export const runtime = 'nodejs';
 const CORS_HEADERS: Record<string, string> = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, PATCH, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Email', 'Cache-Control': 'no-store' };
@@ -20,7 +20,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ packId: str
     await ensureAndSeedPacks(db);
     const pack = await db.collection('packs').findOne({ packId });
     if (!pack) return json({ success: false, error: 'Pack not found.' }, 404);
-    return json({ success: true, pack: { ...serializePack(pack), imageIds: Array.isArray((pack as any)?.imageIds) ? (pack as any).imageIds : [] } });
+    const resolvedPack = await withResolvedPackImages(db, pack);
+    return json({ success: true, pack: { ...serializePack(resolvedPack), imageIds: Array.isArray((resolvedPack as any)?.imageIds) ? (resolvedPack as any).imageIds : [], resolvedImageIds: Array.isArray((resolvedPack as any)?.resolvedImageIds) ? (resolvedPack as any).resolvedImageIds : [] } });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 500);
   }
@@ -42,6 +43,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ packId: s
     if ('requiredStreak' in body) set.requiredStreak = body.requiredStreak == null ? null : parseNonNegativeInt(body.requiredStreak, 0, 3650);
     if ('requiredAchievementId' in body) set.requiredAchievementId = cleanText(body.requiredAchievementId, 120) || null;
     if ('imageIds' in body) set.imageIds = normalizeImageIds(body.imageIds);
+    if ('mappedLevelIds' in body) set.mappedLevelIds = normalizeLevelIds(body.mappedLevelIds);
+    if ('autoSyncLevelImages' in body) set.autoSyncLevelImages = body.autoSyncLevelImages === true;
     if ('manifestUrl' in body) set.manifestUrl = cleanText(body.manifestUrl, 1000) || null;
     if ('manifestVersion' in body) set.manifestVersion = parseNonNegativeInt(body.manifestVersion, 1, 999999);
     if ('sizeBytes' in body) set.sizeBytes = parseNonNegativeInt(body.sizeBytes, 0, Number.MAX_SAFE_INTEGER);
@@ -54,7 +57,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ packId: s
     await db.collection('packs').updateOne({ packId }, { $set: set });
     const pack = await db.collection('packs').findOne({ packId });
     if (!pack) return json({ success: false, error: 'Pack not found.' }, 404);
-    return json({ success: true, pack: { ...serializePack(pack), imageIds: Array.isArray((pack as any)?.imageIds) ? (pack as any).imageIds : [] } });
+    const resolvedPack = await withResolvedPackImages(db, pack);
+    return json({ success: true, pack: { ...serializePack(resolvedPack), imageIds: Array.isArray((resolvedPack as any)?.imageIds) ? (resolvedPack as any).imageIds : [], resolvedImageIds: Array.isArray((resolvedPack as any)?.resolvedImageIds) ? (resolvedPack as any).resolvedImageIds : [] } });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 400);
   }

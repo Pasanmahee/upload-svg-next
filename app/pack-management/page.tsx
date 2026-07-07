@@ -16,7 +16,11 @@ type PackRecord = {
   requiredStreak?: number | null;
   requiredAchievementId?: string | null;
   imageIds: string[];
+  resolvedImageIds?: string[];
+  mappedLevelIds?: string[];
+  autoSyncLevelImages?: boolean;
   imageCount: number;
+  manualImageCount?: number;
   manifestUrl?: string | null;
   manifestVersion: number;
   sizeBytes: number;
@@ -59,6 +63,8 @@ type PackDraft = {
   sortOrder: string;
   isActive: boolean;
   imageIds: string[];
+  mappedLevelIds: string[];
+  autoSyncLevelImages: boolean;
 };
 
 const emptyDraft: PackDraft = {
@@ -76,6 +82,8 @@ const emptyDraft: PackDraft = {
   sortOrder: '100',
   isActive: true,
   imageIds: [],
+  mappedLevelIds: [],
+  autoSyncLevelImages: true,
 };
 
 function getErrorMessage(err: unknown): string {
@@ -96,6 +104,16 @@ function cleanPackId(value: string): string {
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 90);
+}
+
+function cleanLevelId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80);
 }
 
 function imageLabel(image: ImageRecord): string {
@@ -123,6 +141,8 @@ function draftFromPack(pack: PackRecord): PackDraft {
     sortOrder: String(pack.sortOrder || 100),
     isActive: pack.isActive !== false,
     imageIds: Array.isArray(pack.imageIds) ? pack.imageIds : [],
+    mappedLevelIds: Array.isArray(pack.mappedLevelIds) ? pack.mappedLevelIds.map((id) => cleanLevelId(String(id))).filter(Boolean) : [],
+    autoSyncLevelImages: pack.autoSyncLevelImages === true,
   };
 }
 
@@ -140,6 +160,7 @@ export default function PackManagementPage() {
   const [selectedPackId, setSelectedPackId] = useState<string>('');
   const [levelFilter, setLevelFilter] = useState<string>('all');
   const [searchText, setSearchText] = useState<string>('');
+  const [mappingLevelId, setMappingLevelId] = useState<string>('beginner');
   const [alert, setAlert] = useState<Alert>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -171,6 +192,7 @@ export default function PackManagementPage() {
 
   const selectedPack = useMemo(() => packs.find((pack) => pack.packId === selectedPackId) || null, [packs, selectedPackId]);
   const selectedLevelName = useMemo(() => levels.find((level) => level.id === levelFilter)?.name || '', [levels, levelFilter]);
+  const mappingLevelName = useMemo(() => levels.find((level) => level.id === mappingLevelId)?.name || mappingLevelId, [levels, mappingLevelId]);
 
   async function readJson(res: Response) {
     const data = await res.json().catch(() => ({}));
@@ -197,7 +219,9 @@ export default function PackManagementPage() {
       const loadedPacks = Array.isArray(packsJson.packs) ? packsJson.packs : [];
       setPacks(loadedPacks);
       setImages(Array.isArray(imagesJson.data) ? imagesJson.data : []);
-      setLevels(Array.isArray(configJson?.config?.levels) ? configJson.config.levels : []);
+      const loadedLevels = Array.isArray(configJson?.config?.levels) ? configJson.config.levels : [];
+      setLevels(loadedLevels);
+      if (!loadedLevels.some((level: GameLevel) => level.id === mappingLevelId) && loadedLevels[0]) setMappingLevelId(loadedLevels[0].id);
 
       if (!selectedPackId && loadedPacks[0]) {
         setSelectedPackId(loadedPacks[0].packId);
@@ -262,6 +286,104 @@ export default function PackManagementPage() {
     setAlert({ kind: 'info', text: 'Image selection cleared for this pack.' });
   }
 
+
+  function applyPackFromServer(pack: PackRecord) {
+    setSelectedPackId(pack.packId);
+    setDraft(draftFromPack(pack));
+    setPacks((current) => current.map((item) => (item.packId === pack.packId ? pack : item)));
+  }
+
+  function currentImagesForLevel(levelId: string): string[] {
+    return images.filter((image) => image.levelId === levelId).map((image) => image._id).filter(Boolean);
+  }
+
+  async function mapLevelToPack() {
+    const levelId = cleanLevelId(mappingLevelId);
+    if (!levelId) {
+      setAlert({ kind: 'error', text: 'Choose a level to map.' });
+      return;
+    }
+
+    if (!selectedPackId) {
+      const ids = currentImagesForLevel(levelId);
+      setDraft((current) => ({
+        ...current,
+        mappedLevelIds: Array.from(new Set([...current.mappedLevelIds, levelId])),
+        autoSyncLevelImages: true,
+        imageIds: Array.from(new Set([...current.imageIds, ...ids])),
+      }));
+      setAlert({ kind: 'success', text: `Mapped ${mappingLevelName}. Save the pack to activate dynamic sync.` });
+      return;
+    }
+
+    setSaving(true);
+    setAlert(null);
+    try {
+      const res = await fetch(`/api/admin/packs/${encodeURIComponent(selectedPackId)}/level-map`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'map',
+          levelId,
+          addImagesNow: true,
+          autoSyncLevelImages: draft.autoSyncLevelImages !== false,
+          manifestVersion: Date.now(),
+        }),
+      });
+      const data = await readJson(res);
+      applyPackFromServer(data.pack as PackRecord);
+      setAlert({ kind: 'success', text: data.message || `Mapped ${mappingLevelName} to this pack.` });
+      await loadAll();
+    } catch (err) {
+      setAlert({ kind: 'error', text: getErrorMessage(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function unmapLevelFromPack(levelId: string, removeImages = false) {
+    const cleanId = cleanLevelId(levelId);
+    if (!cleanId) return;
+
+    if (!selectedPackId) {
+      const removeSet = new Set(removeImages ? currentImagesForLevel(cleanId) : []);
+      setDraft((current) => ({
+        ...current,
+        mappedLevelIds: current.mappedLevelIds.filter((id) => id !== cleanId),
+        imageIds: removeImages ? current.imageIds.filter((id) => !removeSet.has(id)) : current.imageIds,
+      }));
+      setAlert({ kind: 'info', text: removeImages ? 'Level unmapped and loaded images removed from draft.' : 'Level unmapped from draft.' });
+      return;
+    }
+
+    const levelName = levels.find((level) => level.id === cleanId)?.name || cleanId;
+    if (removeImages && !window.confirm(`Unmap ${levelName} and remove its current images from this pack?`)) return;
+
+    setSaving(true);
+    setAlert(null);
+    try {
+      const res = await fetch(`/api/admin/packs/${encodeURIComponent(selectedPackId)}/level-map`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'unmap',
+          levelId: cleanId,
+          removeImages,
+          autoSyncLevelImages: draft.autoSyncLevelImages,
+          manifestVersion: Date.now(),
+        }),
+      });
+      const data = await readJson(res);
+      applyPackFromServer(data.pack as PackRecord);
+      setAlert({ kind: 'success', text: data.message || `${levelName} unmapped.` });
+      await loadAll();
+    } catch (err) {
+      setAlert({ kind: 'error', text: getErrorMessage(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function savePack() {
     const packId = cleanPackId(draft.packId || draft.title);
     if (!packId) {
@@ -281,6 +403,8 @@ export default function PackManagementPage() {
         requiredStreak: draft.requiredStreak.trim() ? toNumber(draft.requiredStreak, 0) : null,
         requiredAchievementId: draft.requiredAchievementId.trim() || null,
         imageIds: draft.imageIds,
+        mappedLevelIds: draft.mappedLevelIds,
+        autoSyncLevelImages: draft.autoSyncLevelImages,
         manifestUrl: draft.manifestUrl.trim() || null,
         manifestVersion: Date.now(),
         sizeBytes: toNumber(draft.sizeBytes, 0),
@@ -456,6 +580,50 @@ export default function PackManagementPage() {
             </label>
           </div>
 
+          <section className="levelMapSection">
+            <div className="featureTitleRow">
+              <div>
+                <h3>Level → Pack Mapping</h3>
+                <p className="help">Map a game-settings level to this pack. With auto-sync on, future images assigned to that level are included in the pack manifest automatically.</p>
+              </div>
+              <span className="chip">Mapped: <strong>{draft.mappedLevelIds.length}</strong></span>
+            </div>
+
+            <div className="settingsGrid compact">
+              <label>
+                Level to map
+                <select value={mappingLevelId} onChange={(e) => setMappingLevelId(e.currentTarget.value)}>
+                  {levels.map((level) => <option key={level.id} value={level.id}>{level.emoji} {level.name}</option>)}
+                </select>
+              </label>
+              <label className="checkboxLabel">
+                <input type="checkbox" checked={draft.autoSyncLevelImages} onChange={(e) => updateDraft('autoSyncLevelImages', e.currentTarget.checked)} />
+                Auto-sync mapped levels into manifest
+              </label>
+            </div>
+
+            <div className="row" style={{ marginTop: 12 }}>
+              <button className="secondary" type="button" onClick={mapLevelToPack} disabled={saving || !mappingLevelId}>Map level to pack</button>
+              <button className="secondary" type="button" onClick={() => unmapLevelFromPack(mappingLevelId, false)} disabled={saving || !draft.mappedLevelIds.includes(mappingLevelId)}>Unmap only</button>
+              <button className="secondary dangerSoft" type="button" onClick={() => unmapLevelFromPack(mappingLevelId, true)} disabled={saving || !draft.mappedLevelIds.includes(mappingLevelId)}>Unmap + remove images</button>
+            </div>
+
+            {draft.mappedLevelIds.length ? (
+              <div className="mappedLevelList">
+                {draft.mappedLevelIds.map((levelId) => {
+                  const level = levels.find((item) => item.id === levelId);
+                  return (
+                    <span className="mappedLevelChip" key={levelId}>
+                      <strong>{level ? `${level.emoji} ${level.name}` : levelId}</strong>
+                      <button type="button" onClick={() => unmapLevelFromPack(levelId, false)} disabled={saving}>Unmap</button>
+                      <button type="button" onClick={() => unmapLevelFromPack(levelId, true)} disabled={saving}>Remove</button>
+                    </span>
+                  );
+                })}
+              </div>
+            ) : <p className="help" style={{ marginTop: 10 }}>No mapped levels yet. You can still manually select images below.</p>}
+          </section>
+
           <section className="imagePickerSection">
             <div className="featureTitleRow">
               <div>
@@ -463,7 +631,8 @@ export default function PackManagementPage() {
                 <p className="help">Selected images will be written into this pack’s <code>imageIds</code> and included in its manifest.</p>
               </div>
               <div className="chips">
-                <span className="chip">Selected: <strong>{draft.imageIds.length}</strong></span>
+                <span className="chip">Manual: <strong>{draft.imageIds.length}</strong></span>
+                {selectedPack?.imageCount ? <span className="chip">Manifest: <strong>{selectedPack.imageCount}</strong></span> : null}
                 {levelFilter !== 'all' ? <span className="chip">Filter: <strong>{levelFilter === 'unassigned' ? 'Unassigned' : selectedLevelName}</strong></span> : null}
               </div>
             </div>
