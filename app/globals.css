@@ -686,3 +686,179 @@ input[type="number"] {
     grid-template-columns: 1fr;
   }
 }
+
+.packManagerShell {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  margin-top: 18px;
+}
+.packListPanel {
+  position: sticky;
+  top: 78px;
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+}
+.packList {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+.packListItem {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 12px;
+  text-align: left;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #111827;
+}
+.packListItem:hover {
+  border-color: #9ca3af;
+  background: #f9fafb;
+}
+.packListItem.active {
+  border-color: #111827;
+  box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.08);
+}
+.packListItem.inactive {
+  opacity: 0.72;
+}
+.packListTitle {
+  font-weight: 800;
+}
+.packListMeta {
+  font-size: 12px;
+  color: #6b7280;
+}
+.packStatus {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  border: 1px solid;
+}
+.packStatus.on {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #047857;
+}
+.packStatus.off {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+.packEditorPanel {
+  min-width: 0;
+}
+.blockLabel {
+  display: block;
+  margin-top: 12px;
+}
+.blockLabel textarea {
+  margin-top: 6px;
+}
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding-top: 18px;
+}
+.checkboxLabel input {
+  width: 18px;
+  height: 18px;
+}
+.imagePickerSection {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid #e5e7eb;
+}
+.selectedImagesDetails {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+.selectedImagesDetails summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+.packImageGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.packImageCard {
+  position: relative;
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: #ffffff;
+  color: #111827;
+  text-align: left;
+}
+.packImageCard:hover {
+  border-color: #9ca3af;
+  background: #f9fafb;
+}
+.packImageCard.selected {
+  border-color: #111827;
+  background: #f8fafc;
+  box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.08);
+}
+.packImageCard img,
+.packImageCard .emptyPreview {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 13px;
+  object-fit: cover;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+.packImageCard strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.packImageCard small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.packImageCheck {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.92);
+  color: white;
+  font-weight: 900;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18);
+}
+@media (max-width: 900px) {
+  .packManagerShell {
+    grid-template-columns: 1fr;
+  }
+  .packListPanel {
+    position: static;
+    max-height: none;
+  }
+}

@@ -33,7 +33,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ packId: st
     );
     const pack = await db.collection('packs').findOne({ packId });
     if (!pack) return json({ success: false, error: 'Pack not found.' }, 404);
-    return json({ success: true, pack: serializePack(pack) });
+    return json({ success: true, pack: { ...serializePack(pack), imageIds: Array.isArray((pack as any)?.imageIds) ? (pack as any).imageIds : [] } });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 400);
   }

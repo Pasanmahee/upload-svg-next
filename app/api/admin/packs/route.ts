@@ -17,7 +17,7 @@ export async function GET(request: Request) {
     const db = client.db(getDbName());
     await ensureAndSeedPacks(db);
     const packs = await db.collection('packs').find({}).sort({ sortOrder: 1, title: 1 }).toArray();
-    return json({ success: true, packs: packs.map((pack: any) => serializePack(pack)) });
+    return json({ success: true, packs: packs.map((pack: any) => ({ ...serializePack(pack), imageIds: Array.isArray(pack?.imageIds) ? pack.imageIds : [] })) });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 500);
   }
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
     await ensureAndSeedPacks(db);
     await db.collection('packs').updateOne({ packId }, { $setOnInsert: { createdAt: now }, $set: doc }, { upsert: true });
     const pack = await db.collection('packs').findOne({ packId });
-    return json({ success: true, pack: serializePack(pack) });
+    return json({ success: true, pack: { ...serializePack(pack), imageIds: Array.isArray((pack as any)?.imageIds) ? (pack as any).imageIds : [] } });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 400);
   }

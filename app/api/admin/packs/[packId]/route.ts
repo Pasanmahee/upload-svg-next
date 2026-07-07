@@ -20,7 +20,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ packId: str
     await ensureAndSeedPacks(db);
     const pack = await db.collection('packs').findOne({ packId });
     if (!pack) return json({ success: false, error: 'Pack not found.' }, 404);
-    return json({ success: true, pack: serializePack(pack) });
+    return json({ success: true, pack: { ...serializePack(pack), imageIds: Array.isArray((pack as any)?.imageIds) ? (pack as any).imageIds : [] } });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 500);
   }
@@ -54,7 +54,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ packId: s
     await db.collection('packs').updateOne({ packId }, { $set: set });
     const pack = await db.collection('packs').findOne({ packId });
     if (!pack) return json({ success: false, error: 'Pack not found.' }, 404);
-    return json({ success: true, pack: serializePack(pack) });
+    return json({ success: true, pack: { ...serializePack(pack), imageIds: Array.isArray((pack as any)?.imageIds) ? (pack as any).imageIds : [] } });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 400);
   }

@@ -68,7 +68,8 @@ export default function Home() {
       <p>
         Also available: <Link href="/upload-svg">Upload SVG Data</Link> (categories, colors, simplified flag) ·{' '}
         <Link href="/manage-images">Manage Uploaded Images</Link> (view/edit/replace/delete) ·{' '}
-        <Link href="/game-settings">Game Settings</Link> (daily puzzle, rewards, levels).
+        <Link href="/game-settings">Game Settings</Link> (daily puzzle, rewards, levels) ·{' '}
+        <Link href="/pack-management">Pack Management</Link> (create packs, assign images, unlock rules).
       </p>
 
       <div className="card">
