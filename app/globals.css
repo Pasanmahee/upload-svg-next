@@ -1145,7 +1145,20 @@ input[type="number"] {
 }
 
 .secondaryButtonLink {
-  background: #fff;
-  color: #111827;
+  background: #ffffff !important;
+  color: #111827 !important;
   border: 1px solid rgba(15, 23, 42, 0.18);
+  box-shadow: none;
+}
+
+.secondaryButtonLink:hover {
+  background: #f9fafb !important;
+  color: #111827 !important;
+  border-color: rgba(15, 23, 42, 0.32);
+}
+
+.secondaryButtonLink:visited,
+.secondaryButtonLink:active,
+.secondaryButtonLink:focus {
+  color: #111827 !important;
 }
