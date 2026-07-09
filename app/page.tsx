@@ -12,6 +12,10 @@ type ProcessResponse = {
   uploadSvgUrl?: string | null;
   publicUrlSvg?: string;
   publicUrlPng?: string;
+  svgDataUrl?: string;
+  previewDataUrl?: string;
+  gcsUrlSvg?: string | null;
+  gcsUrlPng?: string | null;
   previewContentType?: string;
   previewExt?: string;
   colors?: string[];
@@ -491,16 +495,37 @@ export default function Home() {
             </div>
           ) : null}
 
-          {result.publicUrlSvg && (
-            <p>
-              SVG: <a href={result.publicUrlSvg} target="_blank" rel="noreferrer">open</a>
-            </p>
-          )}
-          {result.publicUrlPng && (
-            <p>
-              Preview: <a href={result.publicUrlPng} target="_blank" rel="noreferrer">open</a>
-            </p>
-          )}
+          {result.previewDataUrl || result.publicUrlPng ? (
+            <div className="processPreviewBox">
+              <h4>Generated preview</h4>
+              <img
+                className="generatedPreview"
+                src={result.previewDataUrl || result.publicUrlPng}
+                alt="Generated process preview"
+              />
+              <div className="previewActions">
+                <a
+                  className="buttonLink secondaryButtonLink"
+                  href={result.previewDataUrl || result.publicUrlPng}
+                  download={`processed-preview.${result.previewExt || 'webp'}`}
+                >
+                  Download preview
+                </a>
+                {result.svgDataUrl || result.publicUrlSvg ? (
+                  <a
+                    className="buttonLink secondaryButtonLink"
+                    href={result.svgDataUrl || result.publicUrlSvg}
+                    download="processed-image.svg"
+                  >
+                    Download SVG
+                  </a>
+                ) : null}
+              </div>
+              {result.gcsUrlPng ? (
+                <p className="help">Preview was also saved to GCS, but the admin page uses an inline preview so private bucket permissions do not block viewing.</p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       )}
     </main>

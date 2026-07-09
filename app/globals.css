@@ -1111,3 +1111,41 @@ input[type="number"] {
 .buttonLink:hover {
   filter: brightness(1.08);
 }
+
+/* Process Image inline preview fix: do not rely on private GCS object URLs. */
+.processPreviewBox {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+}
+
+.processPreviewBox h4 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.generatedPreview {
+  display: block;
+  max-width: min(420px, 100%);
+  max-height: 420px;
+  object-fit: contain;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+}
+
+.previewActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.secondaryButtonLink {
+  background: #fff;
+  color: #111827;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+}

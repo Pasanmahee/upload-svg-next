@@ -508,8 +508,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
         uploadSvgUrl: draftId ? `/upload-svg?draftId=${draftId}` : null,
         dbRecord: null,
         recordId: null,
-        publicUrlSvg,
-        publicUrlPng,
+        // Do not expose private storage.googleapis.com objects as the admin
+        // preview/open links. Private buckets return AccessDenied for anonymous
+        // callers. Inline data URLs are safe for immediate admin preview and
+        // download, while GCS URLs remain internal draft metadata.
+        publicUrlSvg: svgInlineDataUrl,
+        publicUrlPng: previewInlineDataUrl,
+        svgDataUrl: svgInlineDataUrl,
+        previewDataUrl: previewInlineDataUrl,
+        gcsUrlSvg: publicUrlSvg && !publicUrlSvg.startsWith('data:') ? publicUrlSvg : null,
+        gcsUrlPng: publicUrlPng && !publicUrlPng.startsWith('data:') ? publicUrlPng : null,
         previewContentType,
         previewExt,
         colors,
