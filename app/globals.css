@@ -1074,3 +1074,40 @@ input[type="number"] {
     grid-template-columns: 1fr;
   }
 }
+
+.draftReadyBox {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid #93c5fd;
+  background: #eff6ff;
+  color: #1e3a8a;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.draftReadyBox p {
+  margin: 4px 0 0;
+  color: #1d4ed8;
+}
+
+.buttonLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: #111827;
+  color: #fff !important;
+  text-decoration: none;
+  font-weight: 700;
+  box-shadow: 0 8px 20px rgba(17, 24, 39, 0.18);
+}
+
+.buttonLink:hover {
+  filter: brightness(1.08);
+}

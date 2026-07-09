@@ -7,6 +7,9 @@ type ProcessResponse = {
   message?: string;
   dbRecord?: any;
   recordId?: string | null;
+  draftOnly?: boolean;
+  draftId?: string | null;
+  uploadSvgUrl?: string | null;
   publicUrlSvg?: string;
   publicUrlPng?: string;
   previewContentType?: string;
@@ -234,6 +237,9 @@ export default function Home() {
     try {
       const fd = new FormData();
       fd.append('image', file);
+      // Keep backend/admin generated SVGs as upload drafts first.
+      // They should not appear in the mobile app's My Works until uploaded intentionally from /upload-svg.
+      fd.append('draftOnly', 'true');
       appendSettings(fd);
 
       const res = await fetch(`/api/process-image/${encodeURIComponent(userId)}?debug=${settings.debug ? '1' : '0'}`, {
@@ -467,6 +473,22 @@ export default function Home() {
 
           {result.error && result.details ? (
             <p className="help"><strong>Error details:</strong> {result.details}</p>
+          ) : null}
+
+          {result.draftOnly && !result.error ? (
+            <div className="draftReadyBox">
+              <div>
+                <strong>Ready for Upload SVG</strong>
+                <p>This generated SVG was saved as a draft only. It was not added to My Works.</p>
+              </div>
+              {result.uploadSvgUrl ? (
+                <Link className="buttonLink" href={result.uploadSvgUrl}>
+                  Load into Upload SVG
+                </Link>
+              ) : (
+                <span className="help">Draft link unavailable because MongoDB is not configured.</span>
+              )}
+            </div>
           ) : null}
 
           {result.publicUrlSvg && (

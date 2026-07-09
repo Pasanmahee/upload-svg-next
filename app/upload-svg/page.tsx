@@ -18,6 +18,18 @@ type Alert =
   | { kind: 'success' | 'error' | 'info'; text: string }
   | null;
 
+type ProcessDraftPayload = {
+  draftId: string;
+  originalFileName?: string;
+  svgFileName?: string;
+  previewFileName?: string;
+  svgDataUrl?: string | null;
+  previewDataUrl?: string | null;
+  previewContentType?: string;
+  colors?: string[];
+  error?: string;
+};
+
 function getErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (typeof err === 'string') return err;
@@ -42,6 +54,13 @@ function useObjectUrl(file: File | null) {
   }, [file]);
 
   return url;
+}
+
+async function dataUrlToFile(dataUrl: string, fileName: string, fallbackType: string) {
+  const res = await fetch(dataUrl);
+  if (!res.ok) throw new Error(`Failed to read generated file: ${res.status}`);
+  const blob = await res.blob();
+  return new File([blob], fileName, { type: blob.type || fallbackType });
 }
 
 function parseColors(input: string): { colors: string[]; invalid: string[] } {
@@ -69,6 +88,7 @@ export default function UploadSvgPage() {
   const formRef = useRef<HTMLFormElement>(null);
 
   const [userId, setUserId] = useState('anonymous');
+  const [isLoadingProcessDraft, setIsLoadingProcessDraft] = useState(false);
 
   const [svgFile, setSvgFile] = useState<File | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -160,9 +180,55 @@ export default function UploadSvgPage() {
     }
   }
 
+  async function loadProcessDraft(draftId: string) {
+    setIsLoadingProcessDraft(true);
+    try {
+      setAlert({ kind: 'info', text: 'Loading generated SVG draft…' });
+      const res = await fetch(`/api/process-drafts/${encodeURIComponent(draftId)}`, { method: 'GET' });
+      const draft = (await res.json()) as ProcessDraftPayload;
+      if (!res.ok) throw new Error(draft?.error || 'Failed to load generated SVG draft');
+
+      if (!draft.svgDataUrl) throw new Error('Generated SVG draft does not contain SVG data.');
+
+      const svg = await dataUrlToFile(draft.svgDataUrl, draft.svgFileName || 'processed-image.svg', 'image/svg+xml');
+      setSvgFile(svg);
+
+      if (Array.isArray(draft.colors) && draft.colors.length > 0) {
+        setColorsText(draft.colors.join(', '));
+      }
+
+      if (draft.previewDataUrl) {
+        const preview = await dataUrlToFile(
+          draft.previewDataUrl,
+          draft.previewFileName || 'processed-preview.webp',
+          draft.previewContentType || 'image/webp',
+        );
+        setImageFile(preview);
+        setUploadImage(true);
+      }
+
+      setAlert({
+        kind: 'success',
+        text: 'Generated SVG loaded. Select level/categories, then click Upload to add it to the app.',
+      });
+    } catch (err: unknown) {
+      setAlert({ kind: 'error', text: `Error loading generated SVG: ${getErrorMessage(err)}` });
+    } finally {
+      setIsLoadingProcessDraft(false);
+    }
+  }
+
   useEffect(() => {
     fetchCategories();
     fetchGameSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const draftId = new URLSearchParams(window.location.search).get('draftId');
+    if (draftId) {
+      loadProcessDraft(draftId);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -255,6 +321,12 @@ export default function UploadSvgPage() {
 
       <div className="card" style={{ marginTop: 16 }}>
         <form ref={formRef} onSubmit={onSubmit}>
+          {isLoadingProcessDraft && (
+            <div className="alert info" style={{ marginBottom: 16 }}>
+              Loading generated SVG from Process Image…
+            </div>
+          )}
+
           <div className="row">
             <label style={{ width: '100%' }}>
               User ID

@@ -134,6 +134,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       return json({ error: 'No image file found. Use form field name "image".' }, 400);
     }
 
+    // Backend/admin processing should create a draft, not a My Works item.
+    // Mobile/app clients that do not send draftOnly keep the old persist-to-svgdata behavior.
+    const draftOnly = optionalBoolean(form, 'draftOnly') ?? false;
+    const originalFileName = typeof image.name === 'string' && image.name ? image.name : 'processed-image';
+
     // Enforce per-user limit BEFORE heavy processing (Sharp + clustering + SVG/PNG generation).
     // This prevents spending CPU/time when the user already reached MAX_RECORDS_PER_USER.
     const canPersist = Boolean(process.env.MONGODB_URI);
@@ -144,7 +149,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     let svgDataCollection: any = null;
 
     stage = 'checking MongoDB user image limit';
-    if (canPersist) {
+    if (canPersist && !draftOnly) {
       const client = await getMongoClient();
       const db = client.db(getDbName());
       svgDataCollection = db.collection('svgdata');
@@ -441,7 +446,71 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       publicUrlPng = `data:${previewContentType};base64,${pngBase64}`;
     }
 
-    // Save record in MongoDB.
+    const processOptions = {
+      kMeansNrOfClusters: settings.kMeansNrOfClusters,
+      kMeansMinDeltaDifference: settings.kMeansMinDeltaDifference,
+      kMeansClusteringColorSpace: settings.kMeansClusteringColorSpace,
+      speckleCleanupEnabled: !!settings.speckleCleanupEnabled,
+      speckleCleanupRadius: settings.speckleCleanupRadius,
+      speckleCleanupPasses: settings.speckleCleanupPasses,
+      narrowPixelStripCleanupRuns: settings.narrowPixelStripCleanupRuns,
+      removeFacetsSmallerThanNrOfPoints: settings.removeFacetsSmallerThanNrOfPoints,
+      maximumNumberOfFacets: settings.maximumNumberOfFacets,
+      nrOfTimesToHalveBorderSegments: settings.nrOfTimesToHalveBorderSegments,
+      svgCurveMode,
+      svgSizeMultiplier,
+      svgFontSize,
+      svgFontColor,
+      showLabels,
+      fillFacets,
+      showBorders,
+      geometry,
+      artisticPreset,
+      artistic,
+    };
+
+    // Backend/admin processing creates a draft that can be loaded into /upload-svg.
+    // This avoids polluting the mobile app's My Works list before the admin intentionally uploads it.
+    if (draftOnly) {
+      let draftId: string | null = null;
+      if (canPersist) {
+        stage = 'saving processed draft to MongoDB';
+        const client = await getMongoClient();
+        const db = client.db(getDbName());
+        const draftRes = await db.collection('processDrafts').insertOne({
+          userId,
+          originalFileName,
+          svgData: publicUrlSvg,
+          pngData: publicUrlPng,
+          previewContentType,
+          previewExt,
+          colors,
+          processOptions,
+          generator: 'svg-generator-backend-port',
+          createdAt: new Date(),
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        });
+        draftId = draftRes.insertedId.toString();
+      }
+
+      return json({
+        message: 'Image processed as an upload draft. It was not added to My Works.',
+        draftOnly: true,
+        draftId,
+        uploadSvgUrl: draftId ? `/upload-svg?draftId=${draftId}` : null,
+        dbRecord: null,
+        recordId: null,
+        publicUrlSvg,
+        publicUrlPng,
+        previewContentType,
+        previewExt,
+        colors,
+        processOptions,
+        warning: canPersist ? undefined : 'MONGODB_URI is not configured; use the SVG/preview links manually.',
+      });
+    }
+
+    // Save record in MongoDB for app/mobile clients that still expect /home?id=<recordId>.
     // IMPORTANT: Do NOT require GCS URLs here.
     // In your logs, GCS may fail (billing disabled) and we fall back to data URLs.
     // If we don't persist those, the client will navigate to /home?id=<recordId>
@@ -456,6 +525,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
         previewContentType,
         previewExt,
         colors,
+        processOptions,
         warning: 'MONGODB_URI is not configured; result was not saved.',
       });
     }
@@ -503,26 +573,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       svgData: publicUrlSvg,
       pngData: publicUrlPng,
       colors,
-      processOptions: {
-        kMeansNrOfClusters: settings.kMeansNrOfClusters,
-        kMeansMinDeltaDifference: settings.kMeansMinDeltaDifference,
-        kMeansClusteringColorSpace: settings.kMeansClusteringColorSpace,
-        speckleCleanupEnabled: !!settings.speckleCleanupEnabled,
-        speckleCleanupRadius: settings.speckleCleanupRadius,
-        speckleCleanupPasses: settings.speckleCleanupPasses,
-        narrowPixelStripCleanupRuns: settings.narrowPixelStripCleanupRuns,
-        removeFacetsSmallerThanNrOfPoints: settings.removeFacetsSmallerThanNrOfPoints,
-        maximumNumberOfFacets: settings.maximumNumberOfFacets,
-        nrOfTimesToHalveBorderSegments: settings.nrOfTimesToHalveBorderSegments,
-        svgCurveMode,
-        svgSizeMultiplier,
-        showLabels,
-        fillFacets,
-        showBorders,
-        geometry,
-        artisticPreset,
-        artistic,
-      },
+      processOptions,
       generator: 'svg-generator-backend-port',
       date: new Date().toISOString(),
     });
@@ -539,23 +590,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       previewContentType,
       previewExt,
       colors,
-      processOptions: {
-        kMeansNrOfClusters: settings.kMeansNrOfClusters,
-        maximumNumberOfFacets: settings.maximumNumberOfFacets,
-        removeFacetsSmallerThanNrOfPoints: settings.removeFacetsSmallerThanNrOfPoints,
-        narrowPixelStripCleanupRuns: settings.narrowPixelStripCleanupRuns,
-        resizeImageWidth: settings.resizeImageWidth,
-        resizeImageHeight: settings.resizeImageHeight,
-        svgCurveMode,
-        svgSizeMultiplier,
-        svgFontSize,
-        svgFontColor,
-        showLabels,
-        fillFacets,
-        showBorders,
-        geometry,
-        artisticPreset,
-      },
+      processOptions,
     });
   } catch (error: any) {
     logger.error('Error processing image', { userId, stage, error: error?.message || error });
