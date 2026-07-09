@@ -914,3 +914,93 @@ input[type="number"] {
   background: #fee2e2;
   border-color: #fca5a5;
 }
+
+/* Process Image page settings visibility fix */
+.processCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settingsPanel {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: #fafafa;
+}
+.settingsHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.settingsHeader h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.settingsHeader p {
+  margin: 4px 0 0;
+  color: #6b7280;
+  font-size: 13px;
+}
+.advancedSettings {
+  margin-top: 14px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 12px;
+}
+.advancedSettings summary {
+  cursor: pointer;
+  font-weight: 800;
+  color: #111827;
+  padding: 8px 0;
+}
+select,
+input[type="number"] {
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  min-width: 280px;
+  background: #fff;
+  font: inherit;
+}
+.checkGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+.checkRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+}
+.checkRow input {
+  width: 18px;
+  height: 18px;
+}
+.checkRow small {
+  margin-left: auto;
+}
+.errorPre {
+  background: #fff7f7;
+  border-color: #fecaca;
+  color: #7f1d1d;
+}
+@media (max-width: 640px) {
+  .settingsHeader {
+    flex-direction: column;
+  }
+  input[type="text"],
+  input[type="number"],
+  input[type="email"],
+  select {
+    min-width: 100%;
+    width: 100%;
+  }
+}

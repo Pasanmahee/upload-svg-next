@@ -41,6 +41,25 @@ function json(data: any, status = 200) {
   });
 }
 
+function isDebugRequest(request: Request): boolean {
+  try {
+    const url = new URL(request.url);
+    const debug = url.searchParams.get('debug');
+    return debug === '1' || debug === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function safeErrorDetails(error: any): { details: string; code?: string; name?: string; stack?: string } {
+  const details = error?.message ? String(error.message) : String(error || 'Unknown error');
+  const out: { details: string; code?: string; name?: string; stack?: string } = { details };
+  if (error?.code) out.code = String(error.code);
+  if (error?.name) out.name = String(error.name);
+  if (error?.stack) out.stack = String(error.stack).split('\\n').slice(0, 8).join('\\n');
+  return out;
+}
+
 type ImageDataLike = { width: number; height: number; data: Uint8ClampedArray };
 
 function optionalNumber(form: FormData, key: string): number | null {
@@ -101,8 +120,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     });
   }
 
+  let stage = 'starting';
+  let includeDebugDetails = isDebugRequest(request) || process.env.NODE_ENV !== 'production';
+
   try {
+    stage = 'reading request form';
     const form = await request.formData();
+    const debugForm = optionalBoolean(form, 'debug');
+    if (debugForm != null) includeDebugDetails = includeDebugDetails || debugForm;
     const image = form.get('image');
 
     if (!(image instanceof File)) {
@@ -118,6 +143,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     const maxPerUser = Number.parseInt(process.env.MAX_RECORDS_PER_USER || '3', 10);
     let svgDataCollection: any = null;
 
+    stage = 'checking MongoDB user image limit';
     if (canPersist) {
       const client = await getMongoClient();
       const db = client.db(getDbName());
@@ -138,6 +164,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       }
     }
 
+    stage = 'parsing processing settings';
     // Clone base settings + apply any overrides from the request
     const settings: any = { ...(settingsJson as any) };
 
@@ -206,9 +233,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       labelHalo: optionalBoolean(form, 'labelHalo') ?? settings.labelHalo ?? true,
     };
 
+    stage = 'reading uploaded image bytes';
     const buf = Buffer.from(await image.arrayBuffer());
 
     // Decode & optionally resize image with sharp (no canvas dependency)
+    stage = 'decoding image metadata with Sharp';
     let pipeline = sharp(buf).rotate();
     const meta = await pipeline.metadata();
 
@@ -227,6 +256,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       logger.log(`Resizing input image (was ${meta.width}x${meta.height}) to fit within ${settings.resizeImageWidth}x${settings.resizeImageHeight}`);
     }
 
+    stage = 'converting image to raw RGBA pixels';
     const { data, info } = await pipeline.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
 
     const imgData: ImageDataLike = {
@@ -243,6 +273,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
 
     logger.log('Running k-means clustering', { userId, w: info.width, h: info.height, k: settings.kMeansNrOfClusters });
 
+    stage = 'running k-means color clustering';
     await ColorReducer.applyKMeansClustering(
       imgData as any,
       kmeansImgData as any,
@@ -251,6 +282,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       null,
     );
 
+    stage = 'creating color map';
     const colormapResult = ColorReducer.createColorMap(kmeansImgData as any);
 
     if (settings.speckleCleanupEnabled && settings.speckleCleanupRadius > 0 && settings.speckleCleanupPasses > 0) {
@@ -259,6 +291,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
         radius: settings.speckleCleanupRadius,
         passes: settings.speckleCleanupPasses,
       });
+      stage = 'running speckle cleanup';
       await ColorReducer.processSpeckleCleanup(
         colormapResult as any,
         settings.speckleCleanupRadius,
@@ -269,7 +302,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     let facetResult: any = null;
     const cleanupRuns = Math.max(0, Math.floor(settings.narrowPixelStripCleanupRuns || 0));
     const buildAndReduceFacets = async () => {
+      stage = 'creating facets';
       const nextFacetResult = await FacetCreator.getFacets(imgData.width, imgData.height, colormapResult.imgColorIndices);
+      stage = 'reducing facets';
       await FacetReducer.reduceFacets(
         settings.removeFacetsSmallerThanNrOfPoints,
         settings.removeFacetsFromLargeToSmall,
@@ -286,15 +321,20 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     } else {
       for (let run = 0; run < cleanupRuns; run++) {
         logger.log('Running narrow pixel strip cleanup', { userId, run: run + 1, cleanupRuns });
+        stage = `running narrow pixel strip cleanup ${run + 1}/${cleanupRuns}`;
         await ColorReducer.processNarrowPixelStripCleanup(colormapResult as any);
         facetResult = await buildAndReduceFacets();
       }
     }
 
+    stage = 'building facet border paths';
     await FacetBorderTracer.buildFacetBorderPaths(facetResult);
+    stage = 'building facet border segments';
     await FacetBorderSegmenter.buildFacetBorderSegments(facetResult, settings.nrOfTimesToHalveBorderSegments);
+    stage = 'placing labels';
     await FacetLabelPlacer.buildFacetLabelBounds(facetResult);
 
+    stage = 'creating SVG output';
     const svgString = await createSVG(
       facetResult,
       colormapResult.colorsByIndex,
@@ -323,6 +363,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     // Paint-by-number output has limited distinct colors (k clusters + borders + labels).
     const approxPalette = Math.max(32, Math.min(128, (colormapResult.colorsByIndex?.length || 0) + 24));
 
+    stage = 'creating preview raster';
     const raster = await optimiseRaster(svgBuffer, {
       maxDim: previewMaxDim,
       maxColors: approxPalette,
@@ -342,6 +383,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     const disableGcs = process.env.DISABLE_GCS === '1';
     if (!disableGcs) {
       try {
+        stage = 'uploading processed assets to GCS';
         const bucketName = getBucketName();
         const storage = getStorage();
         const bucket = storage.bucket(bucketName);
@@ -430,6 +472,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       }
     }
 
+    stage = 'saving processed record to MongoDB';
     const insertRes = await svgDataCollection.insertOne({
       userId,
       svgData: publicUrlSvg,
@@ -466,9 +509,26 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       previewContentType,
       previewExt,
       colors,
+      processOptions: {
+        kMeansNrOfClusters: settings.kMeansNrOfClusters,
+        maximumNumberOfFacets: settings.maximumNumberOfFacets,
+        removeFacetsSmallerThanNrOfPoints: settings.removeFacetsSmallerThanNrOfPoints,
+        narrowPixelStripCleanupRuns: settings.narrowPixelStripCleanupRuns,
+        resizeImageWidth: settings.resizeImageWidth,
+        resizeImageHeight: settings.resizeImageHeight,
+        svgCurveMode,
+      },
     });
   } catch (error: any) {
-    logger.error('Error processing image', { userId, error: error?.message || error });
-    return json({ error: 'An error occurred while processing the image. Please try again later.' }, 500);
+    logger.error('Error processing image', { userId, stage, error: error?.message || error });
+    const debug = safeErrorDetails(error);
+    return json(
+      {
+        error: 'An error occurred while processing the image. Please try again later.',
+        stage,
+        ...(includeDebugDetails ? debug : {}),
+      },
+      500,
+    );
   }
 }
