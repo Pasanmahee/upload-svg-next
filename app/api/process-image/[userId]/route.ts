@@ -406,6 +406,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
 
     const colors = extractColorPalette(colormapResult.colorsByIndex as any);
 
+    // Always keep inline draft copies for the admin Process Image → Upload SVG flow.
+    // GCS URLs can exist but still be private/403 in some deployments, so draft loading
+    // must not depend on public bucket access.
+    const svgInlineDataUrl = `data:image/svg+xml;base64,${Buffer.from(svgString, 'utf8').toString('base64')}`;
+    const previewInlineDataUrl = `data:${previewContentType};base64,${previewBuffer.toString('base64')}`;
+
     // Upload SVG + PNG to GCS (preferred). If GCS is not configured, fall back to inline data URLs.
     let publicUrlSvg: string | null = null;
     let publicUrlPng: string | null = null; // kept for backward compatibility (now stores WebP)
@@ -440,10 +446,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     }
 
     if (!publicUrlSvg || !publicUrlPng) {
-      const svgBase64 = Buffer.from(svgString, 'utf8').toString('base64');
-      const pngBase64 = previewBuffer.toString('base64');
-      publicUrlSvg = `data:image/svg+xml;base64,${svgBase64}`;
-      publicUrlPng = `data:${previewContentType};base64,${pngBase64}`;
+      publicUrlSvg = svgInlineDataUrl;
+      publicUrlPng = previewInlineDataUrl;
     }
 
     const processOptions = {
@@ -482,6 +486,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
           originalFileName,
           svgData: publicUrlSvg,
           pngData: publicUrlPng,
+          // Inline copies are the source of truth for loading drafts into Upload SVG.
+          // They avoid 403 errors when GCS objects are not public.
+          svgInlineData: svgInlineDataUrl,
+          pngInlineData: previewInlineDataUrl,
           previewContentType,
           previewExt,
           colors,

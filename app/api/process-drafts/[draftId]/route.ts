@@ -1,6 +1,6 @@
 import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { verifyFirebaseAuth } from '@/lib/auth';
+import { isAdminEmail, verifyFirebaseAuth } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 
@@ -48,6 +48,23 @@ async function sourceToDataUrl(source: unknown, fallbackContentType: string): Pr
   return toBase64DataUrl(Buffer.from(arrayBuffer), contentType);
 }
 
+async function sourceToDataUrlWithFallback(
+  primary: unknown,
+  fallback: unknown,
+  fallbackContentType: string,
+): Promise<string | null> {
+  const first = await sourceToDataUrl(fallback, fallbackContentType);
+  if (first) return first;
+
+  try {
+    return await sourceToDataUrl(primary, fallbackContentType);
+  } catch (error) {
+    const second = await sourceToDataUrl(fallback, fallbackContentType);
+    if (second) return second;
+    throw error;
+  }
+}
+
 function safeName(name: unknown, fallback: string) {
   const raw = typeof name === 'string' && name.trim() ? name.trim() : fallback;
   return raw.split(/[/\\]/).pop()!.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || fallback;
@@ -67,12 +84,17 @@ export async function GET(request: Request, ctx: { params: Promise<{ draftId: st
     const draft = await db.collection('processDrafts').findOne({ _id: new ObjectId(draftId) });
     if (!draft) return json({ error: 'Draft not found. It may have expired or been cleared.' }, 404);
 
-    if (draft.userId && draft.userId !== auth.uid) {
+    const isAdmin = auth.email ? isAdminEmail(auth.email) : false;
+    if (draft.userId && draft.userId !== auth.uid && !isAdmin) {
       return json({ error: 'Forbidden' }, 403);
     }
 
-    const svgDataUrl = await sourceToDataUrl(draft.svgData, 'image/svg+xml');
-    const previewDataUrl = await sourceToDataUrl(draft.pngData, draft.previewContentType || 'image/webp');
+    const svgDataUrl = await sourceToDataUrlWithFallback(draft.svgData, draft.svgInlineData, 'image/svg+xml');
+    const previewDataUrl = await sourceToDataUrlWithFallback(
+      draft.pngData,
+      draft.pngInlineData,
+      draft.previewContentType || 'image/webp',
+    );
 
     return json({
       draftId,
@@ -103,6 +125,8 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ draftId:
 
   const client = await getMongoClient();
   const db = client.db(getDbName());
-  const res = await db.collection('processDrafts').deleteOne({ _id: new ObjectId(draftId), userId: auth.uid });
+  const filter: Record<string, unknown> = { _id: new ObjectId(draftId) };
+  if (!auth.email || !isAdminEmail(auth.email)) filter.userId = auth.uid;
+  const res = await db.collection('processDrafts').deleteOne(filter);
   return json({ deleted: res.deletedCount > 0 });
 }
