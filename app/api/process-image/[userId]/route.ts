@@ -43,6 +43,27 @@ function json(data: any, status = 200) {
 
 type ImageDataLike = { width: number; height: number; data: Uint8ClampedArray };
 
+function optionalNumber(form: FormData, key: string): number | null {
+  const raw = form.get(key)?.toString();
+  if (raw == null || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function optionalBoolean(form: FormData, key: string): boolean | null {
+  const raw = form.get(key)?.toString();
+  if (raw == null || raw === '') return null;
+  const value = raw.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(value)) return true;
+  if (['0', 'false', 'no', 'off'].includes(value)) return false;
+  return null;
+}
+
+function optionalString(form: FormData, key: string): string | null {
+  const raw = form.get(key)?.toString();
+  return raw == null || raw === '' ? null : raw;
+}
+
 // Next.js 15+ passes params as a Promise ("Dynamic APIs are Asynchronous").
 // Unwrap with await before reading properties.
 export async function POST(request: Request, ctx: { params: Promise<{ userId: string }> }) {
@@ -139,7 +160,51 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     const maximumNumberOfFacets = form.get('maximumNumberOfFacets')?.toString();
     if (maximumNumberOfFacets) settings.maximumNumberOfFacets = parseInt(maximumNumberOfFacets, 10);
 
+    const removeSmall = optionalNumber(form, 'removeFacetsSmallerThanNrOfPoints');
+    if (removeSmall != null) settings.removeFacetsSmallerThanNrOfPoints = Math.max(1, Math.floor(removeSmall));
+
+    const removeLargeFirst = optionalBoolean(form, 'removeFacetsFromLargeToSmall');
+    if (removeLargeFirst != null) settings.removeFacetsFromLargeToSmall = removeLargeFirst;
+
+    const narrowRuns = optionalNumber(form, 'narrowPixelStripCleanupRuns');
+    if (narrowRuns != null) settings.narrowPixelStripCleanupRuns = Math.max(0, Math.min(10, Math.floor(narrowRuns)));
+
+    const borderHalves = optionalNumber(form, 'nrOfTimesToHalveBorderSegments');
+    if (borderHalves != null) settings.nrOfTimesToHalveBorderSegments = Math.max(0, Math.min(8, Math.floor(borderHalves)));
+
+    const speckleEnabled = optionalBoolean(form, 'speckleCleanupEnabled');
+    if (speckleEnabled != null) settings.speckleCleanupEnabled = speckleEnabled;
+
+    const speckleRadius = optionalNumber(form, 'speckleCleanupRadius');
+    if (speckleRadius != null) settings.speckleCleanupRadius = Math.max(0, Math.min(3, Math.floor(speckleRadius)));
+
+    const specklePasses = optionalNumber(form, 'speckleCleanupPasses');
+    if (specklePasses != null) settings.speckleCleanupPasses = Math.max(0, Math.min(5, Math.floor(specklePasses)));
+
+    const resizeWidth = optionalNumber(form, 'resizeImageWidth');
+    if (resizeWidth != null) settings.resizeImageWidth = Math.max(64, Math.floor(resizeWidth));
+
+    const resizeHeight = optionalNumber(form, 'resizeImageHeight');
+    if (resizeHeight != null) settings.resizeImageHeight = Math.max(64, Math.floor(resizeHeight));
+
+    const resizeIfTooLarge = optionalBoolean(form, 'resizeImageIfTooLarge');
+    if (resizeIfTooLarge != null) settings.resizeImageIfTooLarge = resizeIfTooLarge;
+
     const svgSizeMultiplier = Number(form.get('svgSizeMultiplier')?.toString() || 3);
+    const svgFontSize = optionalNumber(form, 'svgFontSize') ?? 60;
+    const svgFontColor = optionalString(form, 'svgFontColor') ?? 'black';
+    const svgCurveMode = optionalString(form, 'svgCurveMode') || settings.svgCurveMode || 'cubic_catmull';
+
+    const artistic = {
+      borderSimplifyEpsilon: optionalNumber(form, 'borderSimplifyEpsilon') ?? settings.borderSimplifyEpsilon ?? 0,
+      strokeColorMode: optionalString(form, 'strokeColorMode') ?? settings.strokeColorMode ?? 'ink',
+      innerStrokeWidth: optionalNumber(form, 'innerStrokeWidth') ?? settings.innerStrokeWidth ?? 1,
+      outerStrokeWidth: optionalNumber(form, 'outerStrokeWidth') ?? settings.outerStrokeWidth ?? settings.innerStrokeWidth ?? 1,
+      strokeOpacity: optionalNumber(form, 'strokeOpacity') ?? settings.strokeOpacity ?? 1,
+      nonScalingStroke: optionalBoolean(form, 'nonScalingStroke') ?? settings.nonScalingStroke ?? false,
+      paintOrderStrokeFill: optionalBoolean(form, 'paintOrderStrokeFill') ?? settings.paintOrderStrokeFill ?? true,
+      labelHalo: optionalBoolean(form, 'labelHalo') ?? settings.labelHalo ?? true,
+    };
 
     const buf = Buffer.from(await image.arrayBuffer());
 
@@ -188,16 +253,43 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
 
     const colormapResult = ColorReducer.createColorMap(kmeansImgData as any);
 
-    let facetResult = await FacetCreator.getFacets(imgData.width, imgData.height, colormapResult.imgColorIndices);
+    if (settings.speckleCleanupEnabled && settings.speckleCleanupRadius > 0 && settings.speckleCleanupPasses > 0) {
+      logger.log('Running speckle cleanup', {
+        userId,
+        radius: settings.speckleCleanupRadius,
+        passes: settings.speckleCleanupPasses,
+      });
+      await ColorReducer.processSpeckleCleanup(
+        colormapResult as any,
+        settings.speckleCleanupRadius,
+        settings.speckleCleanupPasses,
+      );
+    }
 
-    await FacetReducer.reduceFacets(
-      settings.removeFacetsSmallerThanNrOfPoints,
-      settings.removeFacetsFromLargeToSmall,
-      settings.maximumNumberOfFacets,
-      colormapResult.colorsByIndex,
-      facetResult,
-      colormapResult.imgColorIndices,
-    );
+    let facetResult: any = null;
+    const cleanupRuns = Math.max(0, Math.floor(settings.narrowPixelStripCleanupRuns || 0));
+    const buildAndReduceFacets = async () => {
+      const nextFacetResult = await FacetCreator.getFacets(imgData.width, imgData.height, colormapResult.imgColorIndices);
+      await FacetReducer.reduceFacets(
+        settings.removeFacetsSmallerThanNrOfPoints,
+        settings.removeFacetsFromLargeToSmall,
+        settings.maximumNumberOfFacets,
+        colormapResult.colorsByIndex,
+        nextFacetResult,
+        colormapResult.imgColorIndices,
+      );
+      return nextFacetResult;
+    };
+
+    if (cleanupRuns === 0) {
+      facetResult = await buildAndReduceFacets();
+    } else {
+      for (let run = 0; run < cleanupRuns; run++) {
+        logger.log('Running narrow pixel strip cleanup', { userId, run: run + 1, cleanupRuns });
+        await ColorReducer.processNarrowPixelStripCleanup(colormapResult as any);
+        facetResult = await buildAndReduceFacets();
+      }
+    }
 
     await FacetBorderTracer.buildFacetBorderPaths(facetResult);
     await FacetBorderSegmenter.buildFacetBorderSegments(facetResult, settings.nrOfTimesToHalveBorderSegments);
@@ -211,8 +303,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
         fillFacets: true,
         showBorders: true,
         showLabels: true,
-        fontSize: 60,
-        fontColor: 'black',
+        fontSize: svgFontSize,
+        fontColor: svgFontColor,
+        curveMode: svgCurveMode,
+        artistic,
       },
       null,
     );
@@ -341,6 +435,22 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       svgData: publicUrlSvg,
       pngData: publicUrlPng,
       colors,
+      processOptions: {
+        kMeansNrOfClusters: settings.kMeansNrOfClusters,
+        kMeansMinDeltaDifference: settings.kMeansMinDeltaDifference,
+        kMeansClusteringColorSpace: settings.kMeansClusteringColorSpace,
+        speckleCleanupEnabled: !!settings.speckleCleanupEnabled,
+        speckleCleanupRadius: settings.speckleCleanupRadius,
+        speckleCleanupPasses: settings.speckleCleanupPasses,
+        narrowPixelStripCleanupRuns: settings.narrowPixelStripCleanupRuns,
+        removeFacetsSmallerThanNrOfPoints: settings.removeFacetsSmallerThanNrOfPoints,
+        maximumNumberOfFacets: settings.maximumNumberOfFacets,
+        nrOfTimesToHalveBorderSegments: settings.nrOfTimesToHalveBorderSegments,
+        svgCurveMode,
+        svgSizeMultiplier,
+        artistic,
+      },
+      generator: 'svg-generator-backend-port',
       date: new Date().toISOString(),
     });
 

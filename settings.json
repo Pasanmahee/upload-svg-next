@@ -2,16 +2,44 @@
     "randomSeed": 7707,
     "kMeansNrOfClusters": 16,
     "kMeansMinDeltaDifference": 1,
-    "kMeansClusteringColorSpace": 0,
+    "kMeansClusteringColorSpace": 2,
     "kMeansColorRestrictions": [],
     "colorAliases": {
-        "A1": [0, 0, 0],
-        "A2": [255, 0, 0],
-        "A3": [0, 255, 0],
-        "A4": [0, 0, 255],
-        "B1": [64, 64, 64],
-        "B2": [128, 128, 128],
-        "B3": [192, 192, 192]
+        "A1": [
+            0,
+            0,
+            0
+        ],
+        "A2": [
+            255,
+            0,
+            0
+        ],
+        "A3": [
+            0,
+            255,
+            0
+        ],
+        "A4": [
+            0,
+            0,
+            255
+        ],
+        "B1": [
+            64,
+            64,
+            64
+        ],
+        "B2": [
+            128,
+            128,
+            128
+        ],
+        "B3": [
+            192,
+            192,
+            192
+        ]
     },
     "removeFacetsSmallerThanNrOfPoints": 5,
     "removeFacetsFromLargeToSmall": true,
@@ -54,5 +82,21 @@
             "filetype": "jpg",
             "filetypeQuality": 80
         }
-    ]
+    ],
+    "speckleCleanupEnabled": true,
+    "speckleCleanupRadius": 1,
+    "speckleCleanupPasses": 1,
+    "borderCurveSmoothingEnabled": true,
+    "borderCurveSmoothingIterations": 3,
+    "borderCurveSmoothingLambda": 0.5,
+    "borderCurveSmoothingMu": -0.53,
+    "svgCurveMode": "cubic_catmull",
+    "borderSimplifyEpsilon": 0,
+    "strokeColorMode": "ink",
+    "innerStrokeWidth": 1,
+    "outerStrokeWidth": 1,
+    "strokeOpacity": 1,
+    "nonScalingStroke": false,
+    "paintOrderStrokeFill": true,
+    "labelHalo": true
 }

@@ -1,6 +1,17 @@
 import type { RGB } from '@/lib/pbn/common';
 import type { FacetResult } from '@/lib/pbn/facetCreator';
 
+export interface SvgArtisticOptions {
+  borderSimplifyEpsilon?: number;
+  strokeColorMode?: 'ink' | 'soft' | string;
+  innerStrokeWidth?: number;
+  outerStrokeWidth?: number;
+  strokeOpacity?: number;
+  nonScalingStroke?: boolean;
+  paintOrderStrokeFill?: boolean;
+  labelHalo?: boolean;
+}
+
 export interface SvgOptions {
   sizeMultiplier: number;
   fillFacets: boolean;
@@ -8,11 +19,157 @@ export interface SvgOptions {
   showLabels: boolean;
   fontSize?: number;
   fontColor?: string;
+  curveMode?: 'quadratic_midpoint' | 'cubic_catmull' | string;
+  artistic?: SvgArtisticOptions | null;
 }
 
 interface Point {
   x: number;
   y: number;
+}
+
+function escapeAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
+
+function fmt(v: number): string {
+  // Compact SVG output like the uploaded browser generator. Two decimals are
+  // enough for smooth 1px borders and keep backend documents small.
+  return (Math.round(v * 100) / 100).toString();
+}
+
+function pointEquals(a?: Point, b?: Point): boolean {
+  return !!a && !!b && a.x === b.x && a.y === b.y;
+}
+
+function perpDist(p: Point, a: Point, b: Point): number {
+  const vx = b.x - a.x;
+  const vy = b.y - a.y;
+  const wx = p.x - a.x;
+  const wy = p.y - a.y;
+  const c1 = wx * vx + wy * vy;
+  if (c1 <= 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  const c2 = vx * vx + vy * vy;
+  if (c2 <= c1) return Math.hypot(p.x - b.x, p.y - b.y);
+  const t = c1 / c2;
+  const projx = a.x + t * vx;
+  const projy = a.y + t * vy;
+  return Math.hypot(p.x - projx, p.y - projy);
+}
+
+function rdp(pts: Point[], eps: number): Point[] {
+  if (!pts || pts.length < 3) return pts;
+  let dmax = 0;
+  let index = 0;
+  const end = pts.length - 1;
+  for (let i = 1; i < end; i++) {
+    const d = perpDist(pts[i], pts[0], pts[end]);
+    if (d > dmax) {
+      index = i;
+      dmax = d;
+    }
+  }
+  if (dmax > eps) {
+    const rec1 = rdp(pts.slice(0, index + 1), eps);
+    const rec2 = rdp(pts.slice(index), eps);
+    return rec1.slice(0, rec1.length - 1).concat(rec2);
+  }
+  return [pts[0], pts[end]];
+}
+
+function simplifyClosedPathRDP(pts: Point[], eps: number): Point[] {
+  if (!pts || pts.length < 4 || eps <= 0) return pts;
+  let ring = pts.slice();
+  if (pointEquals(ring[0], ring[ring.length - 1])) {
+    ring = ring.slice(0, ring.length - 1);
+  }
+  const n = ring.length;
+  if (n < 4) return pts;
+
+  let bestIdx = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < n; i++) {
+    const pPrev = ring[(i - 1 + n) % n];
+    const pCur = ring[i];
+    const pNext = ring[(i + 1) % n];
+    const v1x = pPrev.x - pCur.x;
+    const v1y = pPrev.y - pCur.y;
+    const v2x = pNext.x - pCur.x;
+    const v2y = pNext.y - pCur.y;
+    const l1 = Math.hypot(v1x, v1y);
+    const l2 = Math.hypot(v2x, v2y);
+    if (l1 < 1e-6 || l2 < 1e-6) continue;
+    const cos = (v1x * v2x + v1y * v2y) / (l1 * l2);
+    const c = Math.max(-1, Math.min(1, cos));
+    const score = Math.abs(c + 1);
+    if (score < bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+
+  return rdp(ring.slice(bestIdx).concat(ring.slice(0, bestIdx)), eps);
+}
+
+function buildQuadraticPath(newpath: Point[], sizeMultiplier: number): string {
+  let data = `M ${fmt(newpath[0].x * sizeMultiplier)} ${fmt(newpath[0].y * sizeMultiplier)} `;
+  for (let i = 1; i < newpath.length; i++) {
+    const midpointX = (newpath[i].x + newpath[i - 1].x) / 2;
+    const midpointY = (newpath[i].y + newpath[i - 1].y) / 2;
+    data += `Q ${fmt(midpointX * sizeMultiplier)} ${fmt(midpointY * sizeMultiplier)} ${fmt(newpath[i].x * sizeMultiplier)} ${fmt(newpath[i].y * sizeMultiplier)} `;
+  }
+  return data;
+}
+
+function cornerFactor(pa: Point, pb: Point, pc: Point): number {
+  const v1x = pb.x - pa.x;
+  const v1y = pb.y - pa.y;
+  const v2x = pc.x - pb.x;
+  const v2y = pc.y - pb.y;
+  const l1 = Math.hypot(v1x, v1y);
+  const l2 = Math.hypot(v2x, v2y);
+  if (l1 < 1e-6 || l2 < 1e-6) return 1;
+  const cos = (v1x * v2x + v1y * v2y) / (l1 * l2);
+  const c = Math.max(-1, Math.min(1, cos));
+  const ang = Math.acos(c) * 180 / Math.PI;
+  const minAng = 60;
+  const maxAng = 150;
+  if (ang <= minAng) return 0.25;
+  if (ang >= maxAng) return 1;
+  return 0.25 + (ang - minAng) * (1 - 0.25) / (maxAng - minAng);
+}
+
+function buildCubicCatmullPath(newpath: Point[], sizeMultiplier: number): string {
+  let pts = newpath;
+  if (pts.length > 1 && pointEquals(pts[0], pts[pts.length - 1])) {
+    pts = pts.slice(0, pts.length - 1);
+  }
+  if (pts.length < 4) return buildQuadraticPath(newpath, sizeMultiplier);
+
+  let data = `M ${fmt(pts[0].x * sizeMultiplier)} ${fmt(pts[0].y * sizeMultiplier)} `;
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const p0 = pts[(i - 1 + n) % n];
+    const p1 = pts[i];
+    const p2 = pts[(i + 1) % n];
+    const p3 = pts[(i + 2) % n];
+    const f1 = cornerFactor(p0, p1, p2);
+    const f2 = cornerFactor(p1, p2, p3);
+    const c1x = p1.x + ((p2.x - p0.x) / 6) * f1;
+    const c1y = p1.y + ((p2.y - p0.y) / 6) * f1;
+    const c2x = p2.x - ((p3.x - p1.x) / 6) * f2;
+    const c2y = p2.y - ((p3.y - p1.y) / 6) * f2;
+    data += `C ${fmt(c1x * sizeMultiplier)} ${fmt(c1y * sizeMultiplier)} ${fmt(c2x * sizeMultiplier)} ${fmt(c2y * sizeMultiplier)} ${fmt(p2.x * sizeMultiplier)} ${fmt(p2.y * sizeMultiplier)} `;
+  }
+  return data;
 }
 
 export function rgbToHex(color: number[]): string {
@@ -24,8 +181,10 @@ export function extractColorPalette(colorsByIndex: number[][]): string[] {
 }
 
 /**
- * Converts the computed facets to an SVG string.
- * Ported from the original Express server; intentionally kept compatible with existing downstream clients.
+ * Converts computed facets to an SVG string. This now mirrors the uploaded
+ * browser SVG generator's smoother output: compact numeric formatting,
+ * optional RDP simplification, Catmull-Rom cubic curves, rounded strokes,
+ * label halo support, and junction caps.
  */
 export async function createSVG(
   facetResult: FacetResult,
@@ -40,86 +199,155 @@ export async function createSVG(
     showLabels,
     fontSize = 60,
     fontColor = 'black',
+    curveMode = 'cubic_catmull',
+    artistic = null,
   } = options;
 
   const xmlns = 'http://www.w3.org/2000/svg';
   const svgWidth = sizeMultiplier * facetResult.width;
   const svgHeight = sizeMultiplier * facetResult.height;
 
+  const art = artistic || {};
+  const borderSimplifyEpsilon = typeof art.borderSimplifyEpsilon === 'number' ? art.borderSimplifyEpsilon : 0;
+  const strokeColorMode = art.strokeColorMode ? String(art.strokeColorMode) : 'ink';
+  const innerStrokeWidth = typeof art.innerStrokeWidth === 'number' ? art.innerStrokeWidth : 1;
+  const outerStrokeWidth = typeof art.outerStrokeWidth === 'number' ? art.outerStrokeWidth : innerStrokeWidth;
+  const strokeOpacityClamped = clamp01(typeof art.strokeOpacity === 'number' ? art.strokeOpacity : 1);
+  const nonScalingStroke = !!art.nonScalingStroke;
+  const paintOrderStrokeFill = !!art.paintOrderStrokeFill;
+  const labelHalo = !!art.labelHalo;
+
   let svgString = `<?xml version="1.0" standalone="no"?>\n`;
-  svgString += `<svg width="${svgWidth}" height="${svgHeight}" xmlns="${xmlns}">`;
+  svgString += `<svg width="${fmt(svgWidth)}" height="${fmt(svgHeight)}" viewBox="0 0 ${fmt(svgWidth)} ${fmt(svgHeight)}" xmlns="${xmlns}" shape-rendering="geometricPrecision" preserveAspectRatio="xMidYMid meet">`;
 
   const facets = facetResult.facets;
-  for (let idxFacet = 0; idxFacet < facets.length; idxFacet++) {
-    const f = facets[idxFacet];
-    if (f == null || f.borderSegments.length === 0) continue;
+  let count = 0;
+  for (const f of facets as any[]) {
+    if (f == null || f.borderSegments.length === 0) {
+      count++;
+      continue;
+    }
 
-    let newpath: Point[] = [];
-    const useSegments = true;
+    let newpath: Point[] = f.getFullPathFromBorderSegments(false) as Point[];
+    if (!newpath || newpath.length < 2) {
+      count++;
+      continue;
+    }
 
-    if (useSegments) {
-      newpath = f.getFullPathFromBorderSegments(false) as any;
-    } else {
-      for (let i = 0; i < f.borderPath.length; i++) {
-        newpath.push({
-          x: f.borderPath[i].getWallX() + 0.5,
-          y: f.borderPath[i].getWallY() + 0.5,
-        });
+    if (!pointEquals(newpath[0], newpath[newpath.length - 1])) {
+      newpath = newpath.concat([newpath[0]]);
+    }
+
+    if (borderSimplifyEpsilon > 0 && newpath.length > 6) {
+      newpath = simplifyClosedPathRDP(newpath, borderSimplifyEpsilon);
+      if (!pointEquals(newpath[0], newpath[newpath.length - 1])) {
+        newpath.push(newpath[0]);
       }
     }
 
-    if (newpath.length < 2) continue;
+    let data = curveMode === 'cubic_catmull'
+      ? buildCubicCatmullPath(newpath, sizeMultiplier)
+      : buildQuadraticPath(newpath, sizeMultiplier);
+    data += 'Z';
 
-    // Close path if not already closed
-    const first = newpath[0];
-    const last = newpath[newpath.length - 1];
-    if (first.x !== last.x || first.y !== last.y) {
-      newpath.push(first);
-    }
+    const fillRgb = colorsByIndex[f.color] || [255, 255, 255];
+    const fillColor = `rgb(${fillRgb[0]},${fillRgb[1]},${fillRgb[2]})`;
+    const isOuter = newpath.some((p) => p.x <= 0.01 || p.y <= 0.01 || p.x >= facetResult.width - 0.01 || p.y >= facetResult.height - 0.01);
+    const sw = Math.max(0.1, isOuter ? outerStrokeWidth : innerStrokeWidth);
 
-    // Build quadratic curve path (smooth-ish)
-    let data = 'M ';
-    data += `${first.x * sizeMultiplier} ${first.y * sizeMultiplier} `;
-    for (let i = 1; i < newpath.length; i++) {
-      const midpointX = (newpath[i].x + newpath[i - 1].x) / 2;
-      const midpointY = (newpath[i].y + newpath[i - 1].y) / 2;
-      data += `Q ${midpointX * sizeMultiplier} ${midpointY * sizeMultiplier} ${newpath[i].x * sizeMultiplier} ${newpath[i].y * sizeMultiplier} `;
-    }
-
-    const facetColor = colorsByIndex[f.color];
-    const facetRgb = `rgb(${facetColor[0]},${facetColor[1]},${facetColor[2]})`;
-
-    let svgStroke = 'none';
+    let strokeColor = 'none';
+    let strokeOpacity = '1';
+    let strokeWidth = '1px';
     if (showBorders) {
-      svgStroke = '#000';
+      if (strokeColorMode === 'soft' && fillFacets) {
+        const r = Math.max(0, Math.min(255, Math.round(fillRgb[0] * 0.45)));
+        const g = Math.max(0, Math.min(255, Math.round(fillRgb[1] * 0.45)));
+        const b = Math.max(0, Math.min(255, Math.round(fillRgb[2] * 0.45)));
+        strokeColor = `rgb(${r},${g},${b})`;
+      } else {
+        strokeColor = '#000';
+      }
+      strokeOpacity = String(strokeOpacityClamped);
+      strokeWidth = `${fmt(sw)}px`;
     } else if (fillFacets) {
-      svgStroke = facetRgb;
+      strokeColor = fillColor;
+      strokeOpacity = '1';
+      strokeWidth = '1px';
     }
 
-    const svgFill = fillFacets ? facetRgb : 'none';
+    const pathAttrs = [
+      `data-facetId="${escapeAttr(String(f.id))}"`,
+      `data-color-index="${escapeAttr(String(f.color))}"`,
+      `data-number="${escapeAttr(String(f.color))}"`,
+      `d="${escapeAttr(data)}"`,
+      `fill="${fillFacets ? fillColor : 'none'}"`,
+      `stroke="${strokeColor}"`,
+      `stroke-opacity="${strokeOpacity}"`,
+      `stroke-width="${strokeWidth}"`,
+      `stroke-linejoin="round"`,
+      `stroke-linecap="round"`,
+      `stroke-miterlimit="1"`,
+    ];
+    if (nonScalingStroke) pathAttrs.push('vector-effect="non-scaling-stroke"');
+    if (paintOrderStrokeFill) pathAttrs.push('paint-order="stroke fill"');
+    svgString += `<path ${pathAttrs.join(' ')}></path>`;
 
-    svgString += `<path data-facetId="${f.id}" d="${data}" style="fill: ${svgFill}; stroke: ${svgStroke}; stroke-width: 1px;"></path>`;
-
-    if (showLabels) {
+    if (showLabels && f.labelBounds) {
+      const nrOfDigits = String(f.color).length;
       const labelOffsetX = f.labelBounds.minX * sizeMultiplier;
       const labelOffsetY = f.labelBounds.minY * sizeMultiplier;
       const labelWidth = f.labelBounds.width * sizeMultiplier;
       const labelHeight = f.labelBounds.height * sizeMultiplier;
-      const nrOfDigits = String(f.color).length;
-
-      svgString += `
-        <g class="label" transform="translate(${labelOffsetX},${labelOffsetY})">
-          <svg width="${labelWidth}" height="${labelHeight}" overflow="visible" viewBox="-50 -50 100 100" preserveAspectRatio="xMidYMid meet">
-            <text font-family="Tahoma" font-size="${fontSize / nrOfDigits}" dominant-baseline="middle" text-anchor="middle" fill="${fontColor}">${f.color}</text>
-          </svg>
-        </g>`;
+      const labelStroke = labelHalo
+        ? ` stroke="#fff" stroke-width="${fmt(Math.max(2, fontSize / 18))}" paint-order="stroke fill" stroke-linejoin="round"`
+        : '';
+      svgString += `<g class="label" data-number="${escapeAttr(String(f.color))}" transform="translate(${fmt(labelOffsetX)},${fmt(labelOffsetY)})">`;
+      svgString += `<svg width="${fmt(labelWidth)}" height="${fmt(labelHeight)}" overflow="visible" viewBox="-50 -50 100 100" preserveAspectRatio="xMidYMid meet">`;
+      svgString += `<text font-family="Tahoma" font-size="${fmt(fontSize / nrOfDigits)}" dominant-baseline="middle" text-anchor="middle" fill="${escapeAttr(fontColor)}"${labelStroke}>${escapeAttr(String(f.color))}</text>`;
+      svgString += `</svg></g>`;
     }
 
-    if (onUpdate) {
-      onUpdate((idxFacet + 1) / facets.length);
+    if (onUpdate && count % 100 === 0) {
+      onUpdate((count + 1) / facets.length);
     }
+    count++;
   }
 
+  if (showBorders) {
+    const seen = new Set<any>();
+    const counts = new Map<string, number>();
+    const pointsByKey = new Map<string, Point>();
+    const keyOf = (p: Point) => `${Math.round(p.x * 1000)},${Math.round(p.y * 1000)}`;
+    const add = (p: Point) => {
+      const k = keyOf(p);
+      counts.set(k, (counts.get(k) || 0) + 1);
+      if (!pointsByKey.has(k)) pointsByKey.set(k, p);
+    };
+
+    for (const f of facets as any[]) {
+      if (!f?.borderSegments) continue;
+      for (const segWrapper of f.borderSegments) {
+        const seg = segWrapper?.originalSegment ?? segWrapper;
+        if (!seg || seen.has(seg) || !seg.points || seg.points.length < 2) continue;
+        seen.add(seg);
+        add(seg.points[0]);
+        add(seg.points[seg.points.length - 1]);
+      }
+    }
+
+    let caps = '';
+    const joinRadius = 0.55;
+    for (const [k, c] of counts.entries()) {
+      if (c >= 3) {
+        const p = pointsByKey.get(k);
+        if (!p) continue;
+        caps += `<circle cx="${fmt(p.x * sizeMultiplier)}" cy="${fmt(p.y * sizeMultiplier)}" r="${fmt(joinRadius)}" fill="#000" fill-opacity="${strokeColorMode !== 'ink' ? strokeOpacityClamped * 0.6 : strokeOpacityClamped}"></circle>`;
+      }
+    }
+    if (caps) svgString += `<g id="border-junctions" pointer-events="none">${caps}</g>`;
+  }
+
+  if (onUpdate) onUpdate(1);
   svgString += '</svg>';
   return svgString;
 }

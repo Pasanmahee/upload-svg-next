@@ -9,7 +9,7 @@ export enum ClusteringColorSpace {
 export class Settings {
     public kMeansNrOfClusters: number = 16;
     public kMeansMinDeltaDifference: number = 1;
-    public kMeansClusteringColorSpace: ClusteringColorSpace = ClusteringColorSpace.RGB;
+    public kMeansClusteringColorSpace: ClusteringColorSpace = ClusteringColorSpace.LAB;
 
     public kMeansColorRestrictions: Array<RGB | string> = [];
 
@@ -22,6 +22,16 @@ export class Settings {
     public maximumNumberOfFacets: number = Number.MAX_VALUE;
 
     public nrOfTimesToHalveBorderSegments: number = 2;
+
+    public borderCurveSmoothingEnabled: boolean = true;
+    public borderCurveSmoothingIterations: number = 3;
+    public borderCurveSmoothingLambda: number = 0.5;
+    public borderCurveSmoothingMu: number = -0.53;
+    public svgCurveMode: 'quadratic_midpoint' | 'cubic_catmull' = 'cubic_catmull';
+
+    public speckleCleanupEnabled: boolean = true;
+    public speckleCleanupRadius: number = 1;
+    public speckleCleanupPasses: number = 1;
 
     public resizeImageIfTooLarge: boolean = true;
     public resizeImageWidth: number = 1024;

@@ -247,6 +247,80 @@ export class ColorReducer {
         return colorDistances;
     }
 
+
+    /**
+     * Removes isolated/noisy color speckles after k-means by replacing a pixel with
+     * the local majority color only when that majority is strong enough. Ported
+     * from the uploaded browser SVG generator so server processing matches it.
+     */
+    public static async processSpeckleCleanup(colormapResult: ColorMapResult, radius: number = 1, passes: number = 1) {
+        const w = colormapResult.width;
+        const h = colormapResult.height;
+        const src = colormapResult.imgColorIndices;
+        const k = colormapResult.colorsByIndex ? colormapResult.colorsByIndex.length : 0;
+        if (radius <= 0 || passes <= 0 || w <= 2 || h <= 2 || k <= 1) {
+            return;
+        }
+
+        const safeRadius = Math.max(0, Math.min(3, Math.floor(radius)));
+        const safePasses = Math.max(0, Math.min(5, Math.floor(passes)));
+        const majorityRatio = 0.6;
+
+        for (let pass = 0; pass < safePasses; pass++) {
+            const dst = new Uint8Array2D(w, h);
+
+            for (let x = 0; x < w; x++) {
+                dst.set(x, 0, src.get(x, 0));
+                dst.set(x, h - 1, src.get(x, h - 1));
+            }
+            for (let y = 1; y < h - 1; y++) {
+                dst.set(0, y, src.get(0, y));
+                dst.set(w - 1, y, src.get(w - 1, y));
+            }
+
+            const counts = new Uint16Array(Math.max(256, k));
+            for (let y = 1; y < h - 1; y++) {
+                for (let x = 1; x < w - 1; x++) {
+                    counts.fill(0);
+                    let total = 0;
+                    for (let dy = -safeRadius; dy <= safeRadius; dy++) {
+                        const yy = y + dy;
+                        if (yy < 0 || yy >= h) continue;
+                        for (let dx = -safeRadius; dx <= safeRadius; dx++) {
+                            const xx = x + dx;
+                            if (xx < 0 || xx >= w) continue;
+                            const ci = src.get(xx, yy);
+                            counts[ci] = counts[ci] + 1;
+                            total++;
+                        }
+                    }
+
+                    const cur = src.get(x, y);
+                    let best = cur;
+                    let bestCount = counts[cur];
+                    const limit = k > 0 ? k : 256;
+                    for (let i = 0; i < limit; i++) {
+                        const c = counts[i];
+                        if (c > bestCount) {
+                            bestCount = c;
+                            best = i;
+                        }
+                    }
+                    dst.set(x, y, best !== cur && bestCount >= Math.ceil(total * majorityRatio) ? best : cur);
+                }
+                if (y % 64 === 0) {
+                    await delay(0);
+                }
+            }
+
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    src.set(x, y, dst.get(x, y));
+                }
+            }
+        }
+    }
+
     public static async processNarrowPixelStripCleanup(colormapResult: ColorMapResult) {
         // build the color distance matrix, which describes the distance of each color to each other
         const colorDistances: number[][] = ColorReducer.buildColorDistanceMatrix(colormapResult.colorsByIndex);
