@@ -218,9 +218,34 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     if (resizeIfTooLarge != null) settings.resizeImageIfTooLarge = resizeIfTooLarge;
 
     const svgSizeMultiplier = Number(form.get('svgSizeMultiplier')?.toString() || 3);
-    const svgFontSize = optionalNumber(form, 'svgFontSize') ?? 60;
-    const svgFontColor = optionalString(form, 'svgFontColor') ?? 'black';
+    const svgFontSize = optionalNumber(form, 'svgFontSize') ?? 50;
+    const svgFontColor = optionalString(form, 'svgFontColor') ?? '#000';
     const svgCurveMode = optionalString(form, 'svgCurveMode') || settings.svgCurveMode || 'cubic_catmull';
+
+    // Output/SVG generation settings ported from the uploaded browser generator UI.
+    const showLabels = optionalBoolean(form, 'showLabels') ?? true;
+    const fillFacets = optionalBoolean(form, 'fillFacets') ?? true;
+    const showBorders = optionalBoolean(form, 'showBorders') ?? true;
+    const geometryMode = optionalString(form, 'geometryMode') || 'facets';
+    const geometry = {
+      mode: geometryMode,
+      cellSize: optionalNumber(form, 'geoCellSize') ?? 32,
+      jitter: optionalNumber(form, 'geoJitter') ?? 0.35,
+      edgeStrength: optionalNumber(form, 'geoEdgeStrength') ?? 0.35,
+      useSourceColor: optionalBoolean(form, 'geoUseSourceColor') ?? true,
+    };
+    const artisticPreset = optionalString(form, 'artisticPreset') || 'classic';
+
+    if (geometryMode !== 'facets') {
+      return json(
+        {
+          error: 'This backend build currently supports Facets (paint-by-number) output only.',
+          stage: 'validating SVG generation settings',
+          details: `Selected geometryMode=${geometryMode}. Choose Facets (paint-by-number), or add the geometric SVG renderer before using low-poly/grid modes.`,
+        },
+        400,
+      );
+    }
 
     const artistic = {
       borderSimplifyEpsilon: optionalNumber(form, 'borderSimplifyEpsilon') ?? settings.borderSimplifyEpsilon ?? 0,
@@ -340,9 +365,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       colormapResult.colorsByIndex,
       {
         sizeMultiplier: svgSizeMultiplier,
-        fillFacets: true,
-        showBorders: true,
-        showLabels: true,
+        fillFacets,
+        showBorders,
+        showLabels,
         fontSize: svgFontSize,
         fontColor: svgFontColor,
         curveMode: svgCurveMode,
@@ -491,6 +516,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
         nrOfTimesToHalveBorderSegments: settings.nrOfTimesToHalveBorderSegments,
         svgCurveMode,
         svgSizeMultiplier,
+        showLabels,
+        fillFacets,
+        showBorders,
+        geometry,
+        artisticPreset,
         artistic,
       },
       generator: 'svg-generator-backend-port',
@@ -517,6 +547,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
         resizeImageWidth: settings.resizeImageWidth,
         resizeImageHeight: settings.resizeImageHeight,
         svgCurveMode,
+        svgSizeMultiplier,
+        svgFontSize,
+        svgFontColor,
+        showLabels,
+        fillFacets,
+        showBorders,
+        geometry,
+        artisticPreset,
       },
     });
   } catch (error: any) {

@@ -1004,3 +1004,73 @@ input[type="number"] {
     width: 100%;
   }
 }
+
+/* SVG generator output settings visibility fix */
+.visibleSettingsPanel {
+  background: #ffffff;
+  border-color: #dbeafe;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.06);
+}
+.generatorStatusRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin: 14px 0 18px;
+}
+.generatorStep {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  border-bottom: 3px solid #ccfbf1;
+  color: #fb7185;
+  background: #fff7f8;
+  border-radius: 12px 12px 4px 4px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-align: center;
+  padding: 8px;
+}
+.generatorStep.active {
+  background: #ffe4e6;
+  border-bottom-color: #fb7185;
+}
+.svgRenderOptions {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) repeat(3, minmax(160px, 1fr));
+  gap: 10px;
+  align-items: center;
+  margin: 0 0 16px;
+}
+.svgRenderOptions strong {
+  color: #64748b;
+  font-size: 13px;
+}
+.svgGenerationGrid {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  align-items: end;
+}
+.svgGenerationGrid input,
+.svgGenerationGrid select,
+.visibleSettingsPanel input,
+.visibleSettingsPanel select {
+  width: 100%;
+  min-width: 0;
+  margin-top: 6px;
+}
+.warningBox {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+}
+@media (max-width: 760px) {
+  .svgRenderOptions {
+    grid-template-columns: 1fr;
+  }
+}

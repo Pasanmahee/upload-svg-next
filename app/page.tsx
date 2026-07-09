@@ -19,6 +19,9 @@ type ProcessResponse = {
   code?: string;
 };
 
+type GeometryMode = 'facets' | 'triangles' | 'triangles_sym' | 'squares' | 'hex' | 'mixed';
+type ArtisticPreset = 'classic' | 'stained_glass' | 'soft_ink' | 'poster_flat' | 'low_poly' | 'low_poly_sym';
+
 type ProcessSettings = {
   kMeansNrOfClusters: number;
   kMeansMinDeltaDifference: number;
@@ -34,6 +37,16 @@ type ProcessSettings = {
   speckleCleanupEnabled: boolean;
   speckleCleanupRadius: number;
   speckleCleanupPasses: number;
+
+  showLabels: boolean;
+  fillFacets: boolean;
+  showBorders: boolean;
+  geometryMode: GeometryMode;
+  geoCellSize: number;
+  geoJitter: number;
+  geoEdgeStrength: number;
+  geoUseSourceColor: boolean;
+  artisticPreset: ArtisticPreset;
   svgSizeMultiplier: number;
   svgFontSize: number;
   svgFontColor: string;
@@ -64,16 +77,26 @@ const defaultSettings: ProcessSettings = {
   speckleCleanupEnabled: true,
   speckleCleanupRadius: 1,
   speckleCleanupPasses: 1,
-  svgSizeMultiplier: 1,
-  svgFontSize: 60,
-  svgFontColor: '#333333',
+
+  showLabels: true,
+  fillFacets: true,
+  showBorders: true,
+  geometryMode: 'facets',
+  geoCellSize: 32,
+  geoJitter: 0.35,
+  geoEdgeStrength: 0.35,
+  geoUseSourceColor: true,
+  artisticPreset: 'classic',
+  svgSizeMultiplier: 3,
+  svgFontSize: 50,
+  svgFontColor: '#000',
   svgCurveMode: 'cubic_catmull',
-  borderSimplifyEpsilon: 0,
+  borderSimplifyEpsilon: 1,
   strokeColorMode: 'ink',
-  innerStrokeWidth: 1,
-  outerStrokeWidth: 1,
-  strokeOpacity: 1,
-  nonScalingStroke: false,
+  innerStrokeWidth: 0.5,
+  outerStrokeWidth: 2,
+  strokeOpacity: 0.85,
+  nonScalingStroke: true,
   paintOrderStrokeFill: true,
   labelHalo: true,
   debug: true,
@@ -142,6 +165,28 @@ export default function Home() {
     setSettings((prev) => ({ ...prev, [key]: value }));
   }
 
+  function applyPreset(preset: ArtisticPreset) {
+    setSettings((prev) => {
+      const base = { ...prev, artisticPreset: preset };
+      if (preset === 'classic') {
+        return { ...base, geometryMode: 'facets', borderSimplifyEpsilon: 1, strokeColorMode: 'ink', innerStrokeWidth: 0.5, outerStrokeWidth: 2, strokeOpacity: 0.85, nonScalingStroke: true, paintOrderStrokeFill: true, labelHalo: true, fillFacets: true, showBorders: true, showLabels: true };
+      }
+      if (preset === 'stained_glass') {
+        return { ...base, geometryMode: 'facets', borderSimplifyEpsilon: 0.8, strokeColorMode: 'ink', innerStrokeWidth: 1.4, outerStrokeWidth: 2.8, strokeOpacity: 0.95, nonScalingStroke: true, paintOrderStrokeFill: true, labelHalo: true, fillFacets: true, showBorders: true, showLabels: true };
+      }
+      if (preset === 'soft_ink') {
+        return { ...base, geometryMode: 'facets', borderSimplifyEpsilon: 0.6, strokeColorMode: 'soft', innerStrokeWidth: 0.7, outerStrokeWidth: 1.4, strokeOpacity: 0.75, nonScalingStroke: true, paintOrderStrokeFill: true, labelHalo: true, fillFacets: true, showBorders: true, showLabels: true };
+      }
+      if (preset === 'poster_flat') {
+        return { ...base, geometryMode: 'facets', borderSimplifyEpsilon: 1.6, strokeColorMode: 'ink', innerStrokeWidth: 0.4, outerStrokeWidth: 1.4, strokeOpacity: 0.8, nonScalingStroke: true, paintOrderStrokeFill: true, labelHalo: true, fillFacets: true, showBorders: true, showLabels: true, maximumNumberOfFacets: Math.min(prev.maximumNumberOfFacets, 180) };
+      }
+      if (preset === 'low_poly') {
+        return { ...base, geometryMode: 'triangles', borderSimplifyEpsilon: 0.5, strokeColorMode: 'soft', innerStrokeWidth: 0.5, outerStrokeWidth: 1.2, strokeOpacity: 0.65, nonScalingStroke: true, paintOrderStrokeFill: true, labelHalo: false, showLabels: false };
+      }
+      return { ...base, geometryMode: 'triangles_sym', borderSimplifyEpsilon: 0.5, strokeColorMode: 'soft', innerStrokeWidth: 0.5, outerStrokeWidth: 1.2, strokeOpacity: 0.65, nonScalingStroke: true, paintOrderStrokeFill: true, labelHalo: false, showLabels: false };
+    });
+  }
+
   function appendSettings(fd: FormData) {
     fd.append('kMeansNrOfClusters', String(settings.kMeansNrOfClusters));
     fd.append('kMeansMinDeltaDifference', String(settings.kMeansMinDeltaDifference));
@@ -157,6 +202,16 @@ export default function Home() {
     fd.append('speckleCleanupEnabled', boolValue(settings.speckleCleanupEnabled));
     fd.append('speckleCleanupRadius', String(settings.speckleCleanupRadius));
     fd.append('speckleCleanupPasses', String(settings.speckleCleanupPasses));
+
+    fd.append('showLabels', boolValue(settings.showLabels));
+    fd.append('fillFacets', boolValue(settings.fillFacets));
+    fd.append('showBorders', boolValue(settings.showBorders));
+    fd.append('geometryMode', settings.geometryMode);
+    fd.append('geoCellSize', String(settings.geoCellSize));
+    fd.append('geoJitter', String(settings.geoJitter));
+    fd.append('geoEdgeStrength', String(settings.geoEdgeStrength));
+    fd.append('geoUseSourceColor', boolValue(settings.geoUseSourceColor));
+    fd.append('artisticPreset', settings.artisticPreset);
     fd.append('svgSizeMultiplier', String(settings.svgSizeMultiplier));
     fd.append('svgFontSize', String(settings.svgFontSize));
     fd.append('svgFontColor', settings.svgFontColor);
@@ -207,13 +262,13 @@ export default function Home() {
     <main>
       <h1>Upload & Process Image</h1>
       <p>
-        This page calls <code>/api/process-image/[userId]</code> to generate paint-by-number SVG output and a preview image. It uses your admin session if you are logged in.
+        This page calls <code>/api/process-image/[userId]</code> to generate paint-by-number SVG output and a preview image.
       </p>
       <p>
-        Also available: <Link href="/upload-svg">Upload SVG Data</Link> (categories, colors, simplified flag) ·{' '}
-        <Link href="/manage-images">Manage Uploaded Images</Link> (view/edit/replace/delete) ·{' '}
-        <Link href="/game-settings">Game Settings</Link> (daily puzzle, rewards, levels) ·{' '}
-        <Link href="/pack-management">Pack Management</Link> (create packs, assign images, unlock rules).
+        Also available: <Link href="/upload-svg">Upload SVG Data</Link> ·{' '}
+        <Link href="/manage-images">Manage Uploaded Images</Link> ·{' '}
+        <Link href="/game-settings">Game Settings</Link> ·{' '}
+        <Link href="/pack-management">Pack Management</Link>.
       </p>
 
       <div className="card processCard">
@@ -239,38 +294,118 @@ export default function Home() {
           </label>
         </div>
 
-        <section className="settingsPanel">
+        <section className="settingsPanel visibleSettingsPanel">
           <div className="settingsHeader">
             <div>
-              <h2>Processing settings</h2>
-              <p>These controls are sent directly to <code>/api/process-image</code>.</p>
+              <h2>SVG generation</h2>
+              <p>These output controls match the uploaded SVG generator output tab and are always visible.</p>
             </div>
             <button className="secondary" type="button" onClick={() => setSettings(defaultSettings)} disabled={isLoading}>
               Reset settings
             </button>
           </div>
 
+          <div className="generatorStatusRow" aria-label="SVG generation pipeline steps">
+            {['Quantized image', 'Facet reduction', 'Border tracing', 'Border segmentation', 'Label placement', 'Output'].map((label, idx) => (
+              <span key={label} className={idx === 5 ? 'generatorStep active' : 'generatorStep'}>{label}</span>
+            ))}
+          </div>
+
+          <div className="svgRenderOptions">
+            <strong>SVG render options</strong>
+            <CheckInput label="Show labels" checked={settings.showLabels} onChange={(v) => update('showLabels', v)} />
+            <CheckInput label="Fill facets" checked={settings.fillFacets} onChange={(v) => update('fillFacets', v)} />
+            <CheckInput label="Show borders" checked={settings.showBorders} onChange={(v) => update('showBorders', v)} />
+          </div>
+
+          <div className="grid svgGenerationGrid">
+            <label>
+              Geometry mode
+              <div>
+                <select value={settings.geometryMode} onChange={(e) => update('geometryMode', e.target.value as GeometryMode)}>
+                  <option value="facets">Facets (paint-by-number)</option>
+                  <option value="triangles">Triangles (low poly)</option>
+                  <option value="triangles_sym">Triangles (symmetry)</option>
+                  <option value="squares">Squares grid</option>
+                  <option value="hex">Hex mosaic</option>
+                  <option value="mixed">Mixed (triangles + quads)</option>
+                </select>
+              </div>
+              <div className="help">Backend currently processes Facets mode. Other modes are visible for generator parity.</div>
+            </label>
+            <NumberInput label="Shape size (px)" value={settings.geoCellSize} min={6} max={200} onChange={(v) => update('geoCellSize', v || 32)} />
+            <NumberInput label="Jitter (0–1)" value={settings.geoJitter} min={0} max={1} step={0.05} onChange={(v) => update('geoJitter', v || 0)} />
+            <NumberInput label="Edge detail (0–1)" value={settings.geoEdgeStrength} min={0} max={1} step={0.05} onChange={(v) => update('geoEdgeStrength', v || 0)} />
+            <CheckInput label="Use original colors" checked={settings.geoUseSourceColor} onChange={(v) => update('geoUseSourceColor', v)} />
+
+            <label>
+              Artistic preset
+              <div>
+                <select value={settings.artisticPreset} onChange={(e) => applyPreset(e.target.value as ArtisticPreset)}>
+                  <option value="classic">Classic</option>
+                  <option value="stained_glass">Stained glass</option>
+                  <option value="soft_ink">Soft ink</option>
+                  <option value="poster_flat">Poster flat</option>
+                  <option value="low_poly">Low poly</option>
+                  <option value="low_poly_sym">Low poly (symmetry)</option>
+                </select>
+              </div>
+            </label>
+            <NumberInput label="Border simplify ε" value={settings.borderSimplifyEpsilon} min={0} max={10} step={0.1} onChange={(v) => update('borderSimplifyEpsilon', v || 0)} />
+            <label>
+              Stroke color
+              <div>
+                <select value={settings.strokeColorMode} onChange={(e) => update('strokeColorMode', e.target.value as ProcessSettings['strokeColorMode'])}>
+                  <option value="ink">Ink (black)</option>
+                  <option value="soft">Soft (darken fill)</option>
+                </select>
+              </div>
+            </label>
+            <NumberInput label="Inner stroke width (px)" value={settings.innerStrokeWidth} min={0} max={10} step={0.1} onChange={(v) => update('innerStrokeWidth', v || 0)} />
+            <NumberInput label="Outer stroke width (px)" value={settings.outerStrokeWidth} min={0} max={20} step={0.1} onChange={(v) => update('outerStrokeWidth', v || 0)} />
+            <NumberInput label="Stroke opacity" value={settings.strokeOpacity} min={0} max={1} step={0.05} onChange={(v) => update('strokeOpacity', v || 0)} />
+            <CheckInput label="Non-scaling strokes" checked={settings.nonScalingStroke} onChange={(v) => update('nonScalingStroke', v)} />
+            <CheckInput label="Stroke behind fill" checked={settings.paintOrderStrokeFill} onChange={(v) => update('paintOrderStrokeFill', v)} />
+            <CheckInput label="Label halo" checked={settings.labelHalo} onChange={(v) => update('labelHalo', v)} />
+            <NumberInput label="SVG size multiplier" value={settings.svgSizeMultiplier} min={1} max={8} onChange={(v) => update('svgSizeMultiplier', v || 1)} />
+            <NumberInput label="Label font size" value={settings.svgFontSize} min={1} max={160} onChange={(v) => update('svgFontSize', v || 50)} />
+            <label>
+              Label font color
+              <div>
+                <input type="text" value={settings.svgFontColor} onChange={(e) => update('svgFontColor', e.target.value)} />
+              </div>
+            </label>
+          </div>
+        </section>
+
+        <section className="settingsPanel">
+          <div className="settingsHeader">
+            <div>
+              <h2>Processing settings</h2>
+              <p>These controls affect clustering, facet cleanup, and label placement before SVG output.</p>
+            </div>
+          </div>
+
           <div className="grid">
             <NumberInput label="K / clusters" value={settings.kMeansNrOfClusters} min={2} max={64} onChange={(v) => update('kMeansNrOfClusters', v || 16)} help="Higher = more colors." />
             <NumberInput label="Max facets" value={settings.maximumNumberOfFacets} min={20} max={5000} onChange={(v) => update('maximumNumberOfFacets', v || 200)} help="Higher = more small areas." />
-            <NumberInput label="SVG size multiplier" value={settings.svgSizeMultiplier} min={1} max={8} onChange={(v) => update('svgSizeMultiplier', v || 1)} />
+            <label>
+              Color space
+              <div>
+                <select value={settings.kMeansClusteringColorSpace} onChange={(e) => update('kMeansClusteringColorSpace', Number(e.target.value))}>
+                  <option value={0}>RGB</option>
+                  <option value={1}>HSL</option>
+                  <option value={2}>LAB recommended</option>
+                </select>
+              </div>
+              <div className="help">LAB gives better visual grouping for photos.</div>
+            </label>
           </div>
 
-          <details className="advancedSettings" open>
-            <summary>Advanced settings</summary>
+          <details className="advancedSettings">
+            <summary>Advanced processing cleanup settings</summary>
 
             <div className="grid" style={{ marginTop: 14 }}>
-              <label>
-                Color space
-                <div>
-                  <select value={settings.kMeansClusteringColorSpace} onChange={(e) => update('kMeansClusteringColorSpace', Number(e.target.value))}>
-                    <option value={0}>RGB</option>
-                    <option value={1}>HSL</option>
-                    <option value={2}>LAB recommended</option>
-                  </select>
-                </div>
-                <div className="help">LAB gives better visual grouping for photos.</div>
-              </label>
               <NumberInput label="K-means min delta" value={settings.kMeansMinDeltaDifference} min={0.1} max={20} step={0.1} onChange={(v) => update('kMeansMinDeltaDifference', v || 1)} />
               <NumberInput label="Remove facets smaller than" value={settings.removeFacetsSmallerThanNrOfPoints} min={1} max={200} onChange={(v) => update('removeFacetsSmallerThanNrOfPoints', v || 5)} />
               <NumberInput label="Narrow strip cleanup runs" value={settings.narrowPixelStripCleanupRuns} min={0} max={10} onChange={(v) => update('narrowPixelStripCleanupRuns', v || 0)} />
@@ -279,13 +414,6 @@ export default function Home() {
               <NumberInput label="Resize max height" value={settings.resizeImageHeight} min={64} max={3000} onChange={(v) => update('resizeImageHeight', v || 1024)} />
               <NumberInput label="Speckle radius" value={settings.speckleCleanupRadius} min={0} max={3} onChange={(v) => update('speckleCleanupRadius', v || 0)} />
               <NumberInput label="Speckle passes" value={settings.speckleCleanupPasses} min={0} max={5} onChange={(v) => update('speckleCleanupPasses', v || 0)} />
-              <NumberInput label="Font size" value={settings.svgFontSize} min={10} max={160} onChange={(v) => update('svgFontSize', v || 60)} />
-              <label>
-                Font color
-                <div>
-                  <input type="text" value={settings.svgFontColor} onChange={(e) => update('svgFontColor', e.target.value)} />
-                </div>
-              </label>
               <label>
                 Curve mode
                 <div>
@@ -295,32 +423,22 @@ export default function Home() {
                   </select>
                 </div>
               </label>
-              <label>
-                Stroke mode
-                <div>
-                  <select value={settings.strokeColorMode} onChange={(e) => update('strokeColorMode', e.target.value as ProcessSettings['strokeColorMode'])}>
-                    <option value="ink">Black ink</option>
-                    <option value="soft">Soft darker fill color</option>
-                  </select>
-                </div>
-              </label>
-              <NumberInput label="Inner stroke width" value={settings.innerStrokeWidth} min={0.1} max={8} step={0.1} onChange={(v) => update('innerStrokeWidth', v || 1)} />
-              <NumberInput label="Outer stroke width" value={settings.outerStrokeWidth} min={0.1} max={10} step={0.1} onChange={(v) => update('outerStrokeWidth', v || 1)} />
-              <NumberInput label="Stroke opacity" value={settings.strokeOpacity} min={0.1} max={1} step={0.05} onChange={(v) => update('strokeOpacity', v || 1)} />
-              <NumberInput label="Border simplify epsilon" value={settings.borderSimplifyEpsilon} min={0} max={5} step={0.1} onChange={(v) => update('borderSimplifyEpsilon', v || 0)} />
             </div>
 
             <div className="checkGrid">
               <CheckInput label="Resize image if too large" checked={settings.resizeImageIfTooLarge} onChange={(v) => update('resizeImageIfTooLarge', v)} />
               <CheckInput label="Remove facets large-to-small" checked={settings.removeFacetsFromLargeToSmall} onChange={(v) => update('removeFacetsFromLargeToSmall', v)} />
               <CheckInput label="Speckle cleanup" checked={settings.speckleCleanupEnabled} onChange={(v) => update('speckleCleanupEnabled', v)} />
-              <CheckInput label="Label halo" checked={settings.labelHalo} onChange={(v) => update('labelHalo', v)} />
-              <CheckInput label="Non-scaling stroke" checked={settings.nonScalingStroke} onChange={(v) => update('nonScalingStroke', v)} />
-              <CheckInput label="Paint order stroke/fill" checked={settings.paintOrderStrokeFill} onChange={(v) => update('paintOrderStrokeFill', v)} />
               <CheckInput label="Show debug errors" checked={settings.debug} onChange={(v) => update('debug', v)} />
             </div>
           </details>
         </section>
+
+        {settings.geometryMode !== 'facets' ? (
+          <div className="warningBox">
+            Low-poly/grid geometry settings are visible because they exist in the uploaded generator. This backend build currently processes <strong>Facets</strong> mode only.
+          </div>
+        ) : null}
 
         <div className="row" style={{ marginTop: 14 }}>
           <button onClick={onProcess} disabled={!file || isLoading}>
