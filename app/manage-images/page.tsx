@@ -493,19 +493,23 @@ export default function ManageImagesPage() {
       const token = currentUser
         ? await refreshFirebaseToken(currentUser)
         : firebaseToken;
-      const res = await fetch(
-        `/api/deleteimage?id=${encodeURIComponent(id)}&collection=svgdata`,
-        {
-          method: "DELETE",
-          headers: authHeaders(undefined, token),
-        },
-      );
+      const res = await fetch(`/api/images/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: authHeaders(undefined, token),
+      });
       const text = await res.text();
       const json = text ? JSON.parse(text) : {};
       if (!res.ok) throw new Error(json?.error || "Failed to delete");
 
-      setImages((prev) => prev.filter((r) => r._id !== id));
-      setAlert({ kind: "success", text: "Deleted" });
+      if (images.length <= 1 && page > 1) {
+        loadPreviousPage();
+      } else {
+        setImages((prev) => prev.filter((r) => r._id !== id));
+      }
+      setAlert({
+        kind: "success",
+        text: json?.message || "Image, SVG and preview deleted",
+      });
     } catch (err: unknown) {
       setAlert({
         kind: "error",
@@ -770,6 +774,15 @@ function ImageCard({
     }
   }
 
+  async function handleDelete() {
+    setIsBusy(true);
+    try {
+      await onDelete(img._id);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleToggleOpen() {
     const nextOpen = !open;
     setOpen(nextOpen);
@@ -824,9 +837,18 @@ function ImageCard({
           <button
             className="secondary"
             onClick={handleToggleOpen}
-            disabled={isLoadingDetails}
+            disabled={isLoadingDetails || isBusy}
           >
             {isLoadingDetails ? "Loading…" : open ? "Close" : "Edit"}
+          </button>
+          <button
+            className="dangerSoft"
+            type="button"
+            onClick={handleDelete}
+            disabled={isBusy}
+            aria-label={`Delete image ${img._id}`}
+          >
+            {isBusy ? "Deleting…" : "Delete"}
           </button>
           <a
             className="downloadBtn svgDownloadBtn"
@@ -979,10 +1001,10 @@ function ImageCard({
             </button>
             <button
               className="secondary"
-              onClick={() => onDelete(img._id)}
+              onClick={handleDelete}
               disabled={isBusy}
             >
-              Delete
+              {isBusy ? "Deleting…" : "Delete image and files"}
             </button>
           </div>
 

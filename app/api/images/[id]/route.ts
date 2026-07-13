@@ -18,7 +18,7 @@ type GcsRef = { bucket: string; objectPath: string };
 function setCORSHeaders(): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, PATCH, PUT, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, PATCH, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Email',
     'Cache-Control': 'no-store',
   };
@@ -71,6 +71,9 @@ function parseGcsObjectRef(value: unknown): GcsRef | null {
     return { bucket, objectPath };
   }
 
+  // Do not treat unrelated external URLs as paths in the default bucket.
+  if (/^https?:\/\//i.test(noQuery)) return null;
+
   const objectPath = noQuery.replace(/^\/+/, '');
   if (!objectPath) return null;
   return { bucket: getBucketName(), objectPath };
@@ -96,15 +99,33 @@ async function signReadUrl(maybeUrlOrPath: unknown): Promise<unknown> {
   }
 }
 
-async function deleteIfPresent(maybeUrlOrPath: unknown): Promise<void> {
+type StoredAssetDeleteResult =
+  | { status: 'deleted'; bucket: string; objectPath: string }
+  | { status: 'skipped'; reason: 'empty' | 'inline-data' | 'external-or-invalid' }
+  | { status: 'failed'; bucket: string; objectPath: string; error: string };
+
+async function deleteIfPresent(maybeUrlOrPath: unknown): Promise<StoredAssetDeleteResult> {
+  if (typeof maybeUrlOrPath !== 'string' || !maybeUrlOrPath.trim()) {
+    return { status: 'skipped', reason: 'empty' };
+  }
+  if (isDataUrl(maybeUrlOrPath)) {
+    return { status: 'skipped', reason: 'inline-data' };
+  }
+
   const ref = parseGcsObjectRef(maybeUrlOrPath);
-  if (!ref) return;
+  if (!ref) return { status: 'skipped', reason: 'external-or-invalid' };
 
   try {
     const storage = getStorage();
     await storage.bucket(ref.bucket).file(ref.objectPath).delete({ ignoreNotFound: true });
-  } catch {
-    // best-effort
+    return { status: 'deleted', bucket: ref.bucket, objectPath: ref.objectPath };
+  } catch (err: unknown) {
+    return {
+      status: 'failed',
+      bucket: ref.bucket,
+      objectPath: ref.objectPath,
+      error: getErrorMessage(err),
+    };
   }
 }
 
@@ -565,5 +586,125 @@ export async function PUT(request: Request, ctx: { params: Promise<{ id: string 
   } catch (err: unknown) {
     console.error('images/[id] PUT error:', err);
     return NextResponse.json({ error: 'Failed to replace image', details: getErrorMessage(err) }, { status: 500, headers });
+  }
+}
+
+
+/**
+ * DELETE /api/images/:id
+ * Deletes the MongoDB image record and its managed GCS files.
+ * Admins can delete any item; signed-in users can delete only their own private items.
+ */
+export async function DELETE(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const headers = setCORSHeaders();
+  const { id } = await ctx.params;
+
+  if (!id || !ObjectId.isValid(id)) {
+    return NextResponse.json({ error: 'Invalid id' }, { status: 400, headers });
+  }
+
+  try {
+    const auth = await verifyFirebaseAuth(request);
+    const client = await getMongoClient();
+    const db = client.db(getDbName());
+    const collection = db.collection('svgdata');
+    const objectId = new ObjectId(id);
+
+    const doc = await collection.findOne({ _id: objectId });
+    if (!doc) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404, headers });
+    }
+
+    const access = assertAdminOrOwner(doc, auth);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status, headers });
+    }
+
+    const rawAssets = [
+      { field: 'svgData', value: (doc as any).svgData },
+      { field: 'pngData', value: (doc as any).pngData },
+      { field: 'simplifiedSvgData', value: (doc as any).simplifiedSvgData },
+    ];
+
+    // Avoid deleting the same GCS object twice when two fields point to it.
+    const uniqueAssets = new Map<string, { field: string; value: unknown }>();
+    for (const asset of rawAssets) {
+      const ref = parseGcsObjectRef(asset.value);
+      const key = ref
+        ? `${ref.bucket}/${ref.objectPath}`
+        : `${asset.field}:${typeof asset.value === 'string' ? asset.value.slice(0, 80) : ''}`;
+      if (!uniqueAssets.has(key)) uniqueAssets.set(key, asset);
+    }
+
+    const deletedFiles: Array<{ field: string; result: StoredAssetDeleteResult }> = [];
+    for (const asset of uniqueAssets.values()) {
+      const result = await deleteIfPresent(asset.value);
+      deletedFiles.push({ field: asset.field, result });
+    }
+
+    const failedFiles = deletedFiles.filter((item) => item.result.status === 'failed');
+    if (failedFiles.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'Could not delete one or more stored files. The database record was kept so deletion can be retried.',
+          failedFiles,
+        },
+        { status: 502, headers },
+      );
+    }
+
+    const deleteResult = await collection.deleteOne({ _id: objectId });
+    if (deleteResult.deletedCount !== 1) {
+      return NextResponse.json({ error: 'Image record was not deleted' }, { status: 409, headers });
+    }
+
+    // Remove stale manual pack references and increment pack manifest versions.
+    const now = new Date();
+    const packCleanup = await db.collection('packs').updateMany(
+      { imageIds: id },
+      {
+        $pull: { imageIds: id } as any,
+        $set: { updatedAt: now },
+        $inc: { manifestVersion: 1 },
+      },
+    );
+
+    // Remove manual daily-challenge mappings that point to this deleted image.
+    const gameConfig = await db.collection<any>('appSettings').findOne({ _id: 'game-features' });
+    const manualByDate = (gameConfig as any)?.dailyReward?.manualImageByDate;
+    const dailyUnset: Record<string, ''> = {};
+    const removedDailyDates: string[] = [];
+    if (manualByDate && typeof manualByDate === 'object' && !Array.isArray(manualByDate)) {
+      for (const [date, imageId] of Object.entries(manualByDate)) {
+        if (String(imageId) === id) {
+          dailyUnset[`dailyReward.manualImageByDate.${date}`] = '';
+          removedDailyDates.push(date);
+        }
+      }
+    }
+    if (Object.keys(dailyUnset).length > 0) {
+      await db.collection<any>('appSettings').updateOne(
+        { _id: 'game-features' },
+        { $unset: dailyUnset, $set: { updatedAt: now, updatedBy: auth.ok ? auth.email || auth.uid : 'manage-images' } },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        ok: true,
+        message: 'Image, SVG, preview, and database record deleted successfully.',
+        id,
+        deletedFiles,
+        removedFromPacks: packCleanup.modifiedCount,
+        removedDailyDates,
+      },
+      { headers },
+    );
+  } catch (err: unknown) {
+    console.error('images/[id] DELETE error:', err);
+    return NextResponse.json(
+      { error: 'Failed to delete image', details: getErrorMessage(err) },
+      { status: 500, headers },
+    );
   }
 }
