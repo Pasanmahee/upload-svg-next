@@ -366,29 +366,27 @@ export async function POST(req: Request) {
         pngExt = raster.ext;
       }
     } else {
-      const thumbSvg = buildThumbnailSvg(modifiedSvgData, strokeColor);
-      const thumbBuf = Buffer.from(thumbSvg, 'utf8');
+      // No separate image was attached. Always create the card/game preview
+      // directly from the uploaded SVG. Use the original SVG rather than the
+      // white-fill game copy; otherwise some SVGs can become visually blank.
+      const previewSvgBuffer = Buffer.from(originalSvgData, 'utf8');
 
-      const meta = await sharp(thumbBuf).metadata();
+      const meta = await sharp(previewSvgBuffer, { limitInputPixels: false }).metadata();
       const w = meta.width || 1024;
       const h = meta.height || 1024;
 
       const reducedW = Math.max(1, Math.floor(w * 0.9));
       const reducedH = Math.max(1, Math.floor(h * 0.9));
 
-      // Outline-only thumbnails compress extremely well with a tiny palette.
-      {
-        const raster = await optimiseRaster(thumbBuf, {
-          maxDim: Math.min(envMaxDim, Math.max(reducedW, reducedH)),
-          // Hint: outline-only thumbnails are effectively low-palette.
-          maxColors: 16,
-          minColors: 2,
-          background: '#ffffff',
-        });
-        pngBuffer = raster.buffer;
-        pngContentType = raster.contentType;
-        pngExt = raster.ext;
-      }
+      const raster = await optimiseRaster(previewSvgBuffer, {
+        maxDim: Math.min(envMaxDim, Math.max(reducedW, reducedH)),
+        maxColors: Math.max(16, Math.min(safeColors.length || 64, 64)),
+        minColors: 2,
+        background: '#ffffff',
+      });
+      pngBuffer = raster.buffer;
+      pngContentType = raster.contentType;
+      pngExt = raster.ext;
     }
 
     // Upload to GCS if configured; otherwise fallback to data URLs
