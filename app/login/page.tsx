@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 type Alert = { kind: 'error' | 'info'; text: string } | null;
@@ -11,6 +11,15 @@ function LoginForm() {
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [alert, setAlert] = useState<Alert>(searchParams.get('loggedOut') ? { kind: 'info', text: 'Logged out successfully.' } : null);
+
+  useEffect(() => {
+    if (!alert) return;
+
+    const timeoutMs = alert.kind === 'error' ? 6500 : 3500;
+    const timer = window.setTimeout(() => setAlert(null), timeoutMs);
+
+    return () => window.clearTimeout(timer);
+  }, [alert]);
 
   const nextPath = useMemo(() => {
     const raw = searchParams.get('next') || '/';
@@ -51,8 +60,21 @@ function LoginForm() {
         </p>
 
         {alert ? (
-          <div className={`alert ${alert.kind}`} style={{ marginTop: 16 }}>
-            {alert.text}
+          <div
+            className={`alert ${alert.kind}`}
+            style={{ marginTop: 16 }}
+            role="status"
+            aria-live="polite"
+          >
+            <span>{alert.text}</span>
+            <button
+              className="alertClose"
+              type="button"
+              aria-label="Close message"
+              onClick={() => setAlert(null)}
+            >
+              ×
+            </button>
           </div>
         ) : null}
 

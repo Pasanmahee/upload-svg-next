@@ -108,6 +108,15 @@ export default function UploadSvgPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [alert, setAlert] = useState<Alert>(null);
 
+  useEffect(() => {
+    if (!alert) return;
+
+    const timeoutMs = alert.kind === 'error' ? 6500 : 3500;
+    const timer = window.setTimeout(() => setAlert(null), timeoutMs);
+
+    return () => window.clearTimeout(timer);
+  }, [alert]);
+
   const svgPreviewUrl = useObjectUrl(svgFile);
   const imagePreviewUrl = useObjectUrl(imageFile);
 
@@ -607,8 +616,21 @@ export default function UploadSvgPage() {
       </div>
 
       {alert && (
-        <div style={{ marginTop: 16 }} className={`alert ${alert.kind}`}>
-          {alert.text}
+        <div
+          style={{ marginTop: 16 }}
+          className={`alert ${alert.kind}`}
+          role="status"
+          aria-live="polite"
+        >
+          <span>{alert.text}</span>
+          <button
+            className="alertClose"
+            type="button"
+            aria-label="Close message"
+            onClick={() => setAlert(null)}
+          >
+            ×
+          </button>
         </div>
       )}
     </main>

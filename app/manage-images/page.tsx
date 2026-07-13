@@ -165,6 +165,15 @@ export default function ManageImagesPage() {
   const [alert, setAlert] = useState<Alert>(null);
   const [images, setImages] = useState<ImageRecord[]>([]);
 
+  useEffect(() => {
+    if (!alert) return;
+
+    const timeoutMs = alert.kind === "error" ? 6500 : 3500;
+    const timer = window.setTimeout(() => setAlert(null), timeoutMs);
+
+    return () => window.clearTimeout(timer);
+  }, [alert]);
+
   function authHeaders(
     extra?: Record<string, string>,
     token = firebaseToken,
@@ -514,8 +523,21 @@ export default function ManageImagesPage() {
       </p>
 
       {alert && (
-        <div className={`alert ${alert.kind}`} style={{ marginTop: 12 }}>
-          {alert.text}
+        <div
+          className={`alert ${alert.kind}`}
+          style={{ marginTop: 12 }}
+          role="status"
+          aria-live="polite"
+        >
+          <span>{alert.text}</span>
+          <button
+            className="alertClose"
+            type="button"
+            aria-label="Close message"
+            onClick={() => setAlert(null)}
+          >
+            ×
+          </button>
         </div>
       )}
 
