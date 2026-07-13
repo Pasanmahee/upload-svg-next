@@ -67,6 +67,7 @@ type ProcessSettings = {
   paintOrderStrokeFill: boolean;
   labelHalo: boolean;
   debug: boolean;
+  serverlessSafeMode: boolean;
 };
 
 const defaultSettings: ProcessSettings = {
@@ -107,6 +108,7 @@ const defaultSettings: ProcessSettings = {
   paintOrderStrokeFill: true,
   labelHalo: true,
   debug: true,
+  serverlessSafeMode: true,
 };
 
 function boolValue(value: boolean) {
@@ -232,6 +234,7 @@ export default function Home() {
     fd.append('paintOrderStrokeFill', boolValue(settings.paintOrderStrokeFill));
     fd.append('labelHalo', boolValue(settings.labelHalo));
     fd.append('debug', boolValue(settings.debug));
+    fd.append('serverlessSafeMode', boolValue(settings.serverlessSafeMode));
   }
 
   async function onProcess() {
@@ -394,6 +397,15 @@ export default function Home() {
               <h2>Processing settings</h2>
               <p>These controls affect clustering, facet cleanup, and label placement before SVG output.</p>
             </div>
+          </div>
+
+          <div className="checkGrid" style={{ marginBottom: 14 }}>
+            <CheckInput
+              label="Vercel-safe processing"
+              checked={settings.serverlessSafeMode}
+              onChange={(v) => update('serverlessSafeMode', v)}
+              help="Prevents 60-second Vercel timeouts by using a 384px working image, one cleanup pass, faster facet reduction, and light noise smoothing."
+            />
           </div>
 
           <div className="grid">

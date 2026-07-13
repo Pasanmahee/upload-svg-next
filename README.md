@@ -1,3 +1,5 @@
+> **Vercel image-processing timeout fix:** Keep **Vercel-safe processing** enabled on the Process Image page. It bounds CPU-heavy facet generation so `/api/process-image/[userId]` can finish within the 60-second Hobby limit. See `VERCEL_PROCESS_IMAGE_TIMEOUT_FIX.md`.
+
 # upload-svg-next
 
 Next.js (App Router) backend + simple UI for **image → SVG (paint-by-number facets)** and **SVG → PNG** generation.
