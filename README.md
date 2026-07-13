@@ -1,12 +1,30 @@
-> **Vercel image-processing timeout fix:** Keep **Vercel-safe processing** enabled on the Process Image page. It bounds CPU-heavy facet generation so `/api/process-image/[userId]` can finish within the 60-second Hobby limit. See `VERCEL_PROCESS_IMAGE_TIMEOUT_FIX.md`.
-
 # upload-svg-next
+
+## Browser-side Process Image fix
+
+The **Process Image** page now performs the expensive paint-by-number work in the user's web browser instead of inside the Vercel function:
+
+1. The browser decodes and resizes the selected image with Canvas.
+2. K-means colour reduction, facet creation/reduction, border tracing, segmentation, label placement, SVG generation, and preview rendering run locally.
+3. Only the finished SVG, preview image, palette, and settings are posted to `POST /api/process-image/:userId/save`.
+4. The lightweight API route stores the generated draft in MongoDB/GCS and returns the **Load into Upload SVG** link.
+
+The old `POST /api/process-image/:userId` server processor remains for backward compatibility, but the admin web page no longer uses it. Therefore, the page is no longer limited by Vercel's 60-second function timeout during image processing.
+
+Production validation completed with:
+
+```bash
+npm ci
+npm run build
+```
+
 
 Next.js (App Router) backend + simple UI for **image → SVG (paint-by-number facets)** and **SVG → PNG** generation.
 
 ## What was added
 
-- `POST /api/process-image/:userId` — accepts an uploaded raster image and returns:
+- `POST /api/process-image/:userId/save` — saves browser-generated SVG/preview drafts without repeating image processing on Vercel.
+- `POST /api/process-image/:userId` — legacy server-side raster processor retained for older clients; it returns:
   - SVG URL (GCS) or inline `data:` URL fallback
   - PNG URL (GCS) or inline `data:` URL fallback
   - extracted colour palette

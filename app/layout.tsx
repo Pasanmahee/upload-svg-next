@@ -4,7 +4,7 @@ import AuthBar from '@/components/AuthBar';
 
 export const metadata = {
   title: 'Upload & Process Image',
-  description: 'Next.js API route for image → SVG and SVG → PNG processing',
+  description: 'Browser-side image → paint-by-number SVG processing with Next.js draft storage',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

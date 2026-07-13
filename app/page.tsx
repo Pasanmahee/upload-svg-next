@@ -1,7 +1,14 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import {
+  processImageInBrowser,
+  type ArtisticPreset,
+  type BrowserProcessProgress,
+  type BrowserProcessSettings,
+  type GeometryMode,
+} from '@/lib/browserImageProcessor';
 
 type ProcessResponse = {
   message?: string;
@@ -24,51 +31,12 @@ type ProcessResponse = {
   details?: string;
   stage?: string;
   code?: string;
+  warning?: string;
+  processingLocation?: 'browser' | 'server';
+  elapsedMs?: number;
 };
 
-type GeometryMode = 'facets' | 'triangles' | 'triangles_sym' | 'squares' | 'hex' | 'mixed';
-type ArtisticPreset = 'classic' | 'stained_glass' | 'soft_ink' | 'poster_flat' | 'low_poly' | 'low_poly_sym';
-
-type ProcessSettings = {
-  kMeansNrOfClusters: number;
-  kMeansMinDeltaDifference: number;
-  kMeansClusteringColorSpace: number;
-  maximumNumberOfFacets: number;
-  removeFacetsSmallerThanNrOfPoints: number;
-  removeFacetsFromLargeToSmall: boolean;
-  narrowPixelStripCleanupRuns: number;
-  nrOfTimesToHalveBorderSegments: number;
-  resizeImageIfTooLarge: boolean;
-  resizeImageWidth: number;
-  resizeImageHeight: number;
-  speckleCleanupEnabled: boolean;
-  speckleCleanupRadius: number;
-  speckleCleanupPasses: number;
-
-  showLabels: boolean;
-  fillFacets: boolean;
-  showBorders: boolean;
-  geometryMode: GeometryMode;
-  geoCellSize: number;
-  geoJitter: number;
-  geoEdgeStrength: number;
-  geoUseSourceColor: boolean;
-  artisticPreset: ArtisticPreset;
-  svgSizeMultiplier: number;
-  svgFontSize: number;
-  svgFontColor: string;
-  svgCurveMode: 'cubic_catmull' | 'quadratic_midpoint';
-  borderSimplifyEpsilon: number;
-  strokeColorMode: 'ink' | 'soft';
-  innerStrokeWidth: number;
-  outerStrokeWidth: number;
-  strokeOpacity: number;
-  nonScalingStroke: boolean;
-  paintOrderStrokeFill: boolean;
-  labelHalo: boolean;
-  debug: boolean;
-  serverlessSafeMode: boolean;
-};
+type ProcessSettings = BrowserProcessSettings;
 
 const defaultSettings: ProcessSettings = {
   kMeansNrOfClusters: 16,
@@ -108,15 +76,21 @@ const defaultSettings: ProcessSettings = {
   paintOrderStrokeFill: true,
   labelHalo: true,
   debug: true,
-  serverlessSafeMode: true,
 };
 
-function boolValue(value: boolean) {
-  return value ? 'true' : 'false';
-}
 
 function useObjectUrl(file: File | null) {
-  return useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file) {
+      setUrl(null);
+      return;
+    }
+    const nextUrl = URL.createObjectURL(file);
+    setUrl(nextUrl);
+    return () => URL.revokeObjectURL(nextUrl);
+  }, [file]);
+  return url;
 }
 
 function NumberInput({ label, value, onChange, min, max, step = 1, help }: {
@@ -167,6 +141,15 @@ export default function Home() {
   const [settings, setSettings] = useState<ProcessSettings>(defaultSettings);
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ProcessResponse | null>(null);
+  const [progress, setProgress] = useState<BrowserProcessProgress | null>(null);
+  const generatedUrlsRef = useRef<string[]>([]);
+
+  function clearGeneratedUrls() {
+    for (const url of generatedUrlsRef.current) URL.revokeObjectURL(url);
+    generatedUrlsRef.current = [];
+  }
+
+  useEffect(() => () => clearGeneratedUrls(), []);
 
   const previewUrl = useObjectUrl(file);
 
@@ -196,86 +179,99 @@ export default function Home() {
     });
   }
 
-  function appendSettings(fd: FormData) {
-    fd.append('kMeansNrOfClusters', String(settings.kMeansNrOfClusters));
-    fd.append('kMeansMinDeltaDifference', String(settings.kMeansMinDeltaDifference));
-    fd.append('kMeansClusteringColorSpace', String(settings.kMeansClusteringColorSpace));
-    fd.append('maximumNumberOfFacets', String(settings.maximumNumberOfFacets));
-    fd.append('removeFacetsSmallerThanNrOfPoints', String(settings.removeFacetsSmallerThanNrOfPoints));
-    fd.append('removeFacetsFromLargeToSmall', boolValue(settings.removeFacetsFromLargeToSmall));
-    fd.append('narrowPixelStripCleanupRuns', String(settings.narrowPixelStripCleanupRuns));
-    fd.append('nrOfTimesToHalveBorderSegments', String(settings.nrOfTimesToHalveBorderSegments));
-    fd.append('resizeImageIfTooLarge', boolValue(settings.resizeImageIfTooLarge));
-    fd.append('resizeImageWidth', String(settings.resizeImageWidth));
-    fd.append('resizeImageHeight', String(settings.resizeImageHeight));
-    fd.append('speckleCleanupEnabled', boolValue(settings.speckleCleanupEnabled));
-    fd.append('speckleCleanupRadius', String(settings.speckleCleanupRadius));
-    fd.append('speckleCleanupPasses', String(settings.speckleCleanupPasses));
-
-    fd.append('showLabels', boolValue(settings.showLabels));
-    fd.append('fillFacets', boolValue(settings.fillFacets));
-    fd.append('showBorders', boolValue(settings.showBorders));
-    fd.append('geometryMode', settings.geometryMode);
-    fd.append('geoCellSize', String(settings.geoCellSize));
-    fd.append('geoJitter', String(settings.geoJitter));
-    fd.append('geoEdgeStrength', String(settings.geoEdgeStrength));
-    fd.append('geoUseSourceColor', boolValue(settings.geoUseSourceColor));
-    fd.append('artisticPreset', settings.artisticPreset);
-    fd.append('svgSizeMultiplier', String(settings.svgSizeMultiplier));
-    fd.append('svgFontSize', String(settings.svgFontSize));
-    fd.append('svgFontColor', settings.svgFontColor);
-    fd.append('svgCurveMode', settings.svgCurveMode);
-    fd.append('borderSimplifyEpsilon', String(settings.borderSimplifyEpsilon));
-    fd.append('strokeColorMode', settings.strokeColorMode);
-    fd.append('innerStrokeWidth', String(settings.innerStrokeWidth));
-    fd.append('outerStrokeWidth', String(settings.outerStrokeWidth));
-    fd.append('strokeOpacity', String(settings.strokeOpacity));
-    fd.append('nonScalingStroke', boolValue(settings.nonScalingStroke));
-    fd.append('paintOrderStrokeFill', boolValue(settings.paintOrderStrokeFill));
-    fd.append('labelHalo', boolValue(settings.labelHalo));
-    fd.append('debug', boolValue(settings.debug));
-    fd.append('serverlessSafeMode', boolValue(settings.serverlessSafeMode));
-  }
 
   async function onProcess() {
     if (!file) return;
     setIsLoading(true);
     setResult(null);
+    setProgress({ stage: 'decoding', label: 'Starting browser processing', progress: 1 });
+    clearGeneratedUrls();
+
+    let currentStage = 'starting browser image processing';
     try {
-      const fd = new FormData();
-      fd.append('image', file);
-      // Keep backend/admin generated SVGs as upload drafts first.
-      // They should not appear in the mobile app's My Works until uploaded intentionally from /upload-svg.
-      fd.append('draftOnly', 'true');
-      appendSettings(fd);
-
-      const res = await fetch(`/api/process-image/${encodeURIComponent(userId)}?debug=${settings.debug ? '1' : '0'}`, {
-        method: 'POST',
-        body: fd,
+      const browserResult = await processImageInBrowser(file, settings, (nextProgress) => {
+        currentStage = nextProgress.label;
+        setProgress(nextProgress);
       });
+      const svgUrl = URL.createObjectURL(browserResult.svgBlob);
+      const previewUrl = URL.createObjectURL(browserResult.previewBlob);
+      generatedUrlsRef.current = [svgUrl, previewUrl];
 
-      const text = await res.text();
-      let json: ProcessResponse;
+      setProgress({ stage: 'completed', label: 'Saving generated draft', progress: 100 });
+      const fd = new FormData();
+      fd.append('svg', new File([browserResult.svgBlob], 'processed-image.svg', { type: 'image/svg+xml' }));
+      fd.append(
+        'preview',
+        new File([browserResult.previewBlob], `processed-preview.${browserResult.previewExt}`, {
+          type: browserResult.previewContentType,
+        }),
+      );
+      fd.append('colors', JSON.stringify(browserResult.colors));
+      fd.append('processOptions', JSON.stringify(browserResult.processOptions));
+      fd.append('originalFileName', file.name || 'processed-image');
+      fd.append('draftOnly', 'true');
+
+      let saved: ProcessResponse = {};
       try {
-        json = text ? (JSON.parse(text) as ProcessResponse) : {};
-      } catch {
-        json = {
-          error: `Backend returned a non-JSON response (${res.status} ${res.statusText || 'Error'}): ${text.slice(0, 500)}`,
+        const res = await fetch(`/api/process-image/${encodeURIComponent(userId)}/save`, {
+          method: 'POST',
+          body: fd,
+        });
+        const text = await res.text();
+        try {
+          saved = text ? (JSON.parse(text) as ProcessResponse) : {};
+        } catch {
+          saved = {
+            error: `Draft save returned a non-JSON response (${res.status} ${res.statusText || 'Error'}): ${text.slice(0, 500)}`,
+          };
+        }
+        if (!res.ok && !saved.error) saved.error = `Draft save failed with HTTP ${res.status}.`;
+      } catch (saveError: any) {
+        saved = {
+          error: `Image processing completed in the browser, but the draft could not be saved: ${saveError?.message || 'Unknown save error'}`,
+          stage: 'saving browser-generated draft',
         };
       }
-      setResult(json);
+
+      setResult({
+        ...saved,
+        message: saved.message || 'Image processed successfully in the browser.',
+        processingLocation: 'browser',
+        elapsedMs: browserResult.elapsedMs,
+        svgDataUrl: svgUrl,
+        previewDataUrl: previewUrl,
+        publicUrlSvg: svgUrl,
+        publicUrlPng: previewUrl,
+        previewContentType: browserResult.previewContentType,
+        previewExt: browserResult.previewExt,
+        colors: browserResult.colors,
+        processOptions: browserResult.processOptions,
+      });
     } catch (e: any) {
-      setResult({ error: e?.message || 'Unexpected error' });
+      clearGeneratedUrls();
+      setResult({
+        error: e?.message || 'Unexpected browser processing error',
+        stage: currentStage,
+        processingLocation: 'browser',
+      });
     } finally {
       setIsLoading(false);
+      setProgress(null);
     }
   }
+
+  function clearResult() {
+    clearGeneratedUrls();
+    setResult(null);
+    setProgress(null);
+  }
+
 
   return (
     <main>
       <h1>Upload & Process Image</h1>
       <p>
-        This page calls <code>/api/process-image/[userId]</code> to generate paint-by-number SVG output and a preview image.
+        The paint-by-number calculation now runs in this browser. The Next.js API only saves the completed SVG and preview as a draft.
       </p>
       <p>
         Also available: <Link href="/upload-svg">Upload SVG Data</Link> ·{' '}
@@ -344,7 +340,7 @@ export default function Home() {
                   <option value="mixed">Mixed (triangles + quads)</option>
                 </select>
               </div>
-              <div className="help">Backend currently processes Facets mode. Other modes are visible for generator parity.</div>
+              <div className="help">Browser processing currently supports Facets mode. Other modes remain visible for generator parity.</div>
             </label>
             <NumberInput label="Shape size (px)" value={settings.geoCellSize} min={6} max={200} onChange={(v) => update('geoCellSize', v || 32)} />
             <NumberInput label="Jitter (0–1)" value={settings.geoJitter} min={0} max={1} step={0.05} onChange={(v) => update('geoJitter', v || 0)} />
@@ -399,15 +395,6 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="checkGrid" style={{ marginBottom: 14 }}>
-            <CheckInput
-              label="Vercel-safe processing"
-              checked={settings.serverlessSafeMode}
-              onChange={(v) => update('serverlessSafeMode', v)}
-              help="Prevents 60-second Vercel timeouts by using a 384px working image, one cleanup pass, faster facet reduction, and light noise smoothing."
-            />
-          </div>
-
           <div className="grid">
             <NumberInput label="K / clusters" value={settings.kMeansNrOfClusters} min={2} max={64} onChange={(v) => update('kMeansNrOfClusters', v || 16)} help="Higher = more colors." />
             <NumberInput label="Max facets" value={settings.maximumNumberOfFacets} min={20} max={5000} onChange={(v) => update('maximumNumberOfFacets', v || 200)} help="Higher = more small areas." />
@@ -458,21 +445,32 @@ export default function Home() {
 
         {settings.geometryMode !== 'facets' ? (
           <div className="warningBox">
-            Low-poly/grid geometry settings are visible because they exist in the uploaded generator. This backend build currently processes <strong>Facets</strong> mode only.
+            Low-poly/grid geometry settings are visible because they exist in the uploaded generator. This browser processor currently supports <strong>Facets</strong> mode only.
           </div>
         ) : null}
 
         <div className="row" style={{ marginTop: 14 }}>
           <button onClick={onProcess} disabled={!file || isLoading}>
-            {isLoading ? 'Processing…' : 'Process'}
+            {isLoading ? (progress?.label || 'Processing in browser…') : 'Process in browser'}
           </button>
-          <button className="secondary" onClick={() => setResult(null)} disabled={isLoading}>
+          <button className="secondary" onClick={clearResult} disabled={isLoading}>
             Clear
           </button>
           <small>
-            Tip: Start with smaller images and low facet count, then increase quality.
+            Processing uses this computer, not a Vercel function. Smaller images and fewer facets finish faster.
           </small>
         </div>
+
+        {isLoading && progress ? (
+          <div className="browserProgressBox" aria-live="polite">
+            <div className="browserProgressHeader">
+              <strong>{progress.label}</strong>
+              <span>{progress.progress}%</span>
+            </div>
+            <progress max={100} value={progress.progress} />
+            <small>The heavy colour clustering and facet generation are running locally in this browser.</small>
+          </div>
+        ) : null}
       </div>
 
       {previewUrl && (
@@ -484,18 +482,24 @@ export default function Home() {
 
       {result && (
         <div style={{ marginTop: 20 }}>
-          <h3>API response</h3>
-          <pre className={result.error ? 'errorPre' : ''}>{JSON.stringify(result, null, 2)}</pre>
+          <h3>Processing result</h3>
+          <pre className={result.error ? 'errorPre' : ''}>{JSON.stringify({ ...result, svgDataUrl: result.svgDataUrl ? '[browser-generated SVG URL]' : undefined, previewDataUrl: result.previewDataUrl ? '[browser-generated preview URL]' : undefined, publicUrlSvg: result.publicUrlSvg ? '[browser-generated SVG URL]' : undefined, publicUrlPng: result.publicUrlPng ? '[browser-generated preview URL]' : undefined }, null, 2)}</pre>
 
           {result.error && result.details ? (
             <p className="help"><strong>Error details:</strong> {result.details}</p>
+          ) : null}
+
+          {result.processingLocation === 'browser' ? (
+            <p className="browserProcessingNote">
+              Processing location: <strong>this browser</strong>{result.elapsedMs ? ` · ${(result.elapsedMs / 1000).toFixed(1)} seconds` : ''}. The server only handled draft storage.
+            </p>
           ) : null}
 
           {result.draftOnly && !result.error ? (
             <div className="draftReadyBox">
               <div>
                 <strong>Ready for Upload SVG</strong>
-                <p>This generated SVG was saved as a draft only. It was not added to My Works.</p>
+                <p>The SVG was generated in the browser and saved as a draft only. It was not added to My Works.</p>
               </div>
               {result.uploadSvgUrl ? (
                 <Link className="buttonLink" href={result.uploadSvgUrl}>

@@ -263,39 +263,6 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       labelHalo: optionalBoolean(form, 'labelHalo') ?? settings.labelHalo ?? true,
     };
 
-    // Vercel Hobby functions have a hard 60-second ceiling. Highly textured images
-    // can create tens of thousands of tiny facets, making reduction exceed that limit.
-    // The safe profile keeps the existing algorithm but bounds its CPU cost.
-    const serverlessSafeMode = optionalBoolean(form, 'serverlessSafeMode') ?? process.env.VERCEL === '1';
-    const performanceAdjustments: string[] = [];
-    if (serverlessSafeMode) {
-      if (!settings.resizeImageIfTooLarge) performanceAdjustments.push('Enabled input resizing.');
-      settings.resizeImageIfTooLarge = true;
-
-      const safeMaxDim = Math.max(256, Math.min(512, Number.parseInt(process.env.PROCESS_IMAGE_SAFE_MAX_DIM || '384', 10) || 384));
-      if (settings.resizeImageWidth > safeMaxDim || settings.resizeImageHeight > safeMaxDim) {
-        performanceAdjustments.push(`Capped working image to ${safeMaxDim}px.`);
-      }
-      settings.resizeImageWidth = Math.min(settings.resizeImageWidth || safeMaxDim, safeMaxDim);
-      settings.resizeImageHeight = Math.min(settings.resizeImageHeight || safeMaxDim, safeMaxDim);
-
-      if (settings.narrowPixelStripCleanupRuns > 1) performanceAdjustments.push('Limited narrow-strip cleanup to one pass.');
-      settings.narrowPixelStripCleanupRuns = Math.min(1, Math.max(0, settings.narrowPixelStripCleanupRuns || 0));
-
-      if (settings.removeFacetsFromLargeToSmall) performanceAdjustments.push('Used faster small-to-large facet reduction.');
-      settings.removeFacetsFromLargeToSmall = false;
-
-      if (settings.removeFacetsSmallerThanNrOfPoints < 25) performanceAdjustments.push('Raised minimum facet size to 25 pixels.');
-      settings.removeFacetsSmallerThanNrOfPoints = Math.max(25, settings.removeFacetsSmallerThanNrOfPoints || 0);
-
-      if (settings.maximumNumberOfFacets > 160) performanceAdjustments.push('Limited output to 160 facets.');
-      settings.maximumNumberOfFacets = Math.min(160, Math.max(20, settings.maximumNumberOfFacets || 160));
-      settings.nrOfTimesToHalveBorderSegments = Math.min(2, Math.max(0, settings.nrOfTimesToHalveBorderSegments || 0));
-      settings.speckleCleanupEnabled = true;
-      settings.speckleCleanupRadius = Math.max(1, settings.speckleCleanupRadius || 0);
-      settings.speckleCleanupPasses = Math.max(1, settings.speckleCleanupPasses || 0);
-    }
-
     stage = 'reading uploaded image bytes';
     const buf = Buffer.from(await image.arrayBuffer());
 
@@ -317,12 +284,6 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
         withoutEnlargement: true,
       });
       logger.log(`Resizing input image (was ${meta.width}x${meta.height}) to fit within ${settings.resizeImageWidth}x${settings.resizeImageHeight}`);
-    }
-
-    if (serverlessSafeMode) {
-      // Light smoothing removes camera noise/compression speckles that otherwise
-      // become thousands of tiny disconnected facets. This is the main timeout fix.
-      pipeline = pipeline.blur(1).median(3);
     }
 
     stage = 'converting image to raw RGBA pixels';
@@ -427,7 +388,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
 
     // Keep previews reasonably small even if SVG multiplier is large.
     const envMaxDim = Number.parseInt(process.env.WEBP_MAX_DIM || process.env.PNG_MAX_DIM || '1024', 10) || 1024;
-    const previewMaxDim = Math.min(envMaxDim, serverlessSafeMode ? 384 : Math.max(reducedWidth, reducedHeight));
+    const previewMaxDim = Math.min(envMaxDim, Math.max(reducedWidth, reducedHeight));
 
     // Paint-by-number output has limited distinct colors (k clusters + borders + labels).
     const approxPalette = Math.max(32, Math.min(128, (colormapResult.colorsByIndex?.length || 0) + 24));
@@ -510,8 +471,6 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       geometry,
       artisticPreset,
       artistic,
-      serverlessSafeMode,
-      performanceAdjustments,
     };
 
     // Backend/admin processing creates a draft that can be loaded into /upload-svg.
