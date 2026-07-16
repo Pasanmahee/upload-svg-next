@@ -55,7 +55,9 @@ function forceOutlineStyle(attributes: string, strokeColor: string): string {
     '',
   );
 
-  const forcedPaint = `fill:#FFFFFF!important;stroke:${strokeColor}!important`;
+  // Match the original crisp thumbnail renderer: transparent/empty regions
+  // over a white background, with only the vector outlines visible.
+  const forcedPaint = `fill:none!important;stroke:${strokeColor}!important`;
   const stylePattern = /\sstyle\s*=\s*(["'])([\s\S]*?)\1/i;
 
   if (stylePattern.test(next)) {

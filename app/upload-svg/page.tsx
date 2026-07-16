@@ -71,52 +71,14 @@ async function dataUrlToFile(dataUrl: string, fileName: string, fallbackType: st
  * When it is off, a preview is still always generated from the SVG, matching
  * the original upload behaviour and avoiding an empty image card.
  */
-async function svgFileToPreviewFile(
+async function svgFileToOutlinePreviewFile(
   svgFile: File,
   strokeColor = '#000000',
-  maxDimension = 1024,
 ): Promise<File> {
   const sourceSvg = await svgFile.text();
   const outlineSvg = buildOutlinePreviewSvg(sourceSvg, strokeColor);
-  const objectUrl = URL.createObjectURL(new Blob([outlineSvg], { type: 'image/svg+xml' }));
-
-  try {
-    const image = new Image();
-    image.decoding = 'async';
-
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error('The selected SVG could not be rendered as a preview image.'));
-      image.src = objectUrl;
-    });
-
-    const sourceWidth = Math.max(1, image.naturalWidth || image.width || 1024);
-    const sourceHeight = Math.max(1, image.naturalHeight || image.height || 1024);
-    const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
-    const width = Math.max(1, Math.round(sourceWidth * scale));
-    const height = Math.max(1, Math.round(sourceHeight * scale));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('Canvas preview generation is not available in this browser.');
-
-    context.fillStyle = '#FFFFFF';
-    context.fillRect(0, 0, width, height);
-    context.drawImage(image, 0, 0, width, height);
-
-    const webpBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', 0.9));
-    const blob = webpBlob ?? await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-    if (!blob) throw new Error('The browser could not create a preview image from the SVG.');
-
-    const baseName = (svgFile.name || 'uploaded-image.svg').replace(/\.svg$/i, '') || 'uploaded-image';
-    const extension = blob.type === 'image/webp' ? 'webp' : 'png';
-    return new File([blob], `${baseName}-preview.${extension}`, { type: blob.type });
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
+  const baseName = (svgFile.name || 'uploaded-image.svg').replace(/\.svg$/i, '') || 'uploaded-image';
+  return new File([outlineSvg], `${baseName}-outline-preview.svg`, { type: 'image/svg+xml' });
 }
 
 function parseColors(input: string): { colors: string[]; invalid: string[] } {
@@ -187,7 +149,7 @@ export default function UploadSvgPage() {
 
     if (!svgFile || uploadImage) return () => { cancelled = true; };
 
-    svgFileToPreviewFile(svgFile, autoPreviewStroke)
+    svgFileToOutlinePreviewFile(svgFile, autoPreviewStroke)
       .then((preview) => {
         if (!cancelled) setAutoPreviewFile(preview);
       })
@@ -365,22 +327,11 @@ export default function UploadSvgPage() {
       fd.append('hasSimplifiedSvg', String(hasSimplifiedSvg));
       fd.append('levelId', selectedLevelId);
 
-      // A preview image must always be stored for the image library/game cards.
-      // Checked: use the separately selected JPG/PNG/WebP file.
-      // Unchecked: automatically rasterise the SVG in this browser.
-      let previewFile: File | null = uploadImage && imageFile ? imageFile : null;
-      if (!uploadImage) {
-        try {
-          previewFile = await svgFileToPreviewFile(svgFile, autoPreviewStroke);
-        } catch (previewError) {
-          // The server route also has an SVG-to-WebP fallback, so do not block
-          // an otherwise valid upload on an unusual browser SVG renderer issue.
-          console.warn('Browser SVG preview generation failed; using server fallback.', previewError);
-        }
-      }
-
-      if (previewFile) {
-        fd.append('imageFile', previewFile);
+      // Restore the original crisp-preview path from commit 9c55e51:
+      // checked sends the custom raster; unchecked sends only the SVG so the
+      // API renders one lossless vector-to-WebP preview (no double compression).
+      if (uploadImage && imageFile) {
+        fd.append('imageFile', imageFile);
       }
 
       const res = await fetch('/api/svgdata', { method: 'POST', body: fd });
