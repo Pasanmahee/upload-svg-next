@@ -5,6 +5,7 @@ import { getMongoClient, getDbName } from '@/lib/mongo';
 import { getBucketName, getStorage } from '@/lib/gcs';
 import { verifyFirebaseAuth } from '@/lib/auth';
 import { getGameConfig, getManualDailyImageId, publicGameConfig } from '@/lib/gameConfig';
+import { normalizeLevelProgress, type GameLevel } from '@/lib/levelSystem';
 
 export const runtime = 'nodejs';
 
@@ -144,9 +145,14 @@ async function serializeDailyImage(doc: any) {
   };
 }
 
-async function getDailyImage(db: any, challengeDate: string, manualImageId?: string | null) {
+async function getDailyImage(
+  db: any,
+  challengeDate: string,
+  levelId: string,
+  manualImageId?: string | null,
+) {
   const collection = db.collection('svgdata');
-  const baseQuery = { userId: { $exists: false } };
+  const baseQuery = { userId: { $exists: false }, levelId };
 
   if (manualImageId && ObjectId.isValid(manualImageId)) {
     const doc = await collection.findOne({ ...baseQuery, _id: new ObjectId(manualImageId) }, { projection: imageProjection() });
@@ -156,7 +162,7 @@ async function getDailyImage(db: any, challengeDate: string, manualImageId?: str
   const total = await collection.countDocuments(baseQuery);
   if (!total) return null;
 
-  const index = hashDateKey(challengeDate) % total;
+  const index = hashDateKey(`${challengeDate}:${levelId}`) % total;
   const [doc] = await collection
     .find(baseQuery, { projection: imageProjection() })
     .sort({ date: -1, _id: -1 })
@@ -165,6 +171,24 @@ async function getDailyImage(db: any, challengeDate: string, manualImageId?: str
     .toArray();
 
   return serializeDailyImage(doc);
+}
+
+function resolveDailyLevelId(requestedLevelId: string, progress: any, levels: GameLevel[]): string {
+  const unlocked = new Set(Array.isArray(progress?.unlockedLevelIds) ? progress.unlockedLevelIds : []);
+
+  if (requestedLevelId && unlocked.has(requestedLevelId) && levels.some((level) => level.id === requestedLevelId)) {
+    return requestedLevelId;
+  }
+
+  if (progress?.lastCompletedLevelId && unlocked.has(progress.lastCompletedLevelId)) {
+    return progress.lastCompletedLevelId;
+  }
+
+  for (let i = levels.length - 1; i >= 0; i--) {
+    if (unlocked.has(levels[i].id)) return levels[i].id;
+  }
+
+  return levels[0]?.id || 'beginner';
 }
 
 function normalizeReward(raw: any) {
@@ -189,6 +213,7 @@ export async function OPTIONS() {
 export async function GET(request: Request) {
   try {
     const challengeDate = todayKey();
+    const requestedLevelId = new URL(request.url).searchParams.get('levelId')?.trim() || '';
     const auth = await verifyFirebaseAuth(request);
     const authIsAnonymous = auth.ok ? !!auth.isAnonymous : false;
     const uid = auth.ok ? auth.uid : null;
@@ -197,8 +222,14 @@ export async function GET(request: Request) {
     const db = client.db(getDbName());
     const rawConfig = await getGameConfig(db);
     const config = publicGameConfig(rawConfig, new URL(request.url).origin);
+    const users = db.collection<any>('users');
+    const userDoc = uid
+      ? await users.findOne({ _id: uid }, { projection: { dailyReward: 1, levelProgress: 1 } })
+      : null;
+    const progress = normalizeLevelProgress(userDoc?.levelProgress, config.levels);
+    const levelId = resolveDailyLevelId(requestedLevelId, progress, config.levels);
     const manualImageId = getManualDailyImageId(config, challengeDate);
-    const image = await getDailyImage(db, challengeDate, manualImageId);
+    const image = await getDailyImage(db, challengeDate, levelId, manualImageId);
     const rewardCoins = config.dailyReward.rewardCoins;
     const streakRewardDays = config.dailyReward.streakRewardDays;
     const specialPack = {
@@ -210,20 +241,19 @@ export async function GET(request: Request) {
     if (!image) {
       return json({
         challengeDate,
+        levelId,
         rewardCoins,
         streakRewardDays,
         dailyIconImageUrl: config.dailyReward.iconImageUrl || null,
         specialPack,
         image: null,
         status: null,
-        message: 'No public images are available for a daily challenge yet.',
+        message: 'No public images are available for this level\'s daily challenge yet.',
       });
     }
 
     let status: any = null;
     if (uid) {
-      const users = db.collection<any>('users');
-      const userDoc = await users.findOne({ _id: uid }, { projection: { dailyReward: 1 } });
       const reward = normalizeReward(userDoc?.dailyReward);
       status = {
         signedIn: !authIsAnonymous,
@@ -248,6 +278,7 @@ export async function GET(request: Request) {
 
     return json({
       challengeDate,
+      levelId,
       rewardCoins,
       streakRewardDays,
       dailyIconImageUrl: config.dailyReward.iconImageUrl || null,
@@ -275,6 +306,7 @@ export async function POST(request: Request) {
   const challengeDate = typeof body?.challengeDate === 'string' ? body.challengeDate : todayKey();
   const currentDate = todayKey();
   const imageId = typeof body?.imageId === 'string' ? body.imageId : '';
+  const requestedLevelId = typeof body?.levelId === 'string' ? body.levelId.trim() : '';
 
   if (challengeDate !== currentDate) {
     return json({ error: 'Only today\'s daily challenge can be claimed.' }, 400);
@@ -289,8 +321,15 @@ export async function POST(request: Request) {
     const db = client.db(getDbName());
     const rawConfig = await getGameConfig(db);
     const config = publicGameConfig(rawConfig, new URL(request.url).origin);
+    const users = db.collection<any>('users');
+    const userDoc = await users.findOne(
+      { _id: auth.uid },
+      { projection: { dailyReward: 1, levelProgress: 1 } },
+    );
+    const progress = normalizeLevelProgress(userDoc?.levelProgress, config.levels);
+    const levelId = resolveDailyLevelId(requestedLevelId, progress, config.levels);
     const manualImageId = getManualDailyImageId(config, challengeDate);
-    const expectedImage = await getDailyImage(db, challengeDate, manualImageId);
+    const expectedImage = await getDailyImage(db, challengeDate, levelId, manualImageId);
     const rewardCoins = config.dailyReward.rewardCoins;
     const streakRewardDays = config.dailyReward.streakRewardDays;
     const specialPack = {
@@ -303,9 +342,7 @@ export async function POST(request: Request) {
       return json({ error: 'This image is not today\'s challenge.' }, 400);
     }
 
-    const users = db.collection<any>('users');
     const now = new Date();
-    const userDoc = await users.findOne({ _id: auth.uid }, { projection: { dailyReward: 1 } });
     const reward = normalizeReward(userDoc?.dailyReward);
 
     if (reward.claimedDates.includes(challengeDate) || reward.lastClaimDate === challengeDate) {
@@ -319,6 +356,7 @@ export async function POST(request: Request) {
         claimedToday: true,
         unlockedSpecialPack: null,
         specialPack,
+        levelId,
         isAnonymous: authIsAnonymous,
       });
     }
@@ -366,6 +404,7 @@ export async function POST(request: Request) {
       claimedToday: true,
       unlockedSpecialPack,
       specialPack,
+      levelId,
       isAnonymous: authIsAnonymous,
     });
   } catch (e) {
