@@ -7,6 +7,7 @@ import { getUidIfPresent } from "@/lib/auth";
 import { optimiseRaster } from '@/lib/imageOptimiser';
 import { getGameConfig } from '@/lib/gameConfig';
 import { isValidLevelId } from '@/lib/levelSystem';
+import { buildOutlinePreviewSvg, choosePreviewStrokeColor } from '@/lib/svgPreview';
 
 export const runtime = 'nodejs';
 
@@ -103,33 +104,6 @@ function decodeSvgDataUrlToText(dataUrl: string): string | null {
   } catch {
     return null;
   }
-}
-
-// ---------- Thumbnail SVG sanitizer (outline-only, hide numbers) ----------
-function buildThumbnailSvg(svgString: string, strokeColor = '#000000') {
-  let s = svgString || '';
-
-  // ensure it’s a full svg
-  if (!/<svg\b/i.test(s)) {
-    s = `<svg xmlns="http://www.w3.org/2000/svg">${s}</svg>`;
-  }
-
-  const styleBlock = `
-<style><![CDATA[
-  path, polygon, polyline, rect, circle, ellipse, line {
-    fill: none !important;
-    stroke: ${strokeColor} !important;
-  }
-  g.label, text { display: none !important; }
-]]></style>`;
-
-  if (/<svg\b[^>]*>/i.test(s)) {
-    s = s.replace(/<svg\b([^>]*)>/i, (m, attrs) => `<svg${attrs}>${styleBlock}`);
-  } else {
-    s = `<svg xmlns="http://www.w3.org/2000/svg">${styleBlock}${s}</svg>`;
-  }
-
-  return s;
 }
 
 function parseColorsAny(raw: string): { colors: string[]; strokeColor: string } {
@@ -300,7 +274,9 @@ export async function POST(req: Request) {
     // Ignore any userId sent by the client (never trust it). Use the verified uid.
     const userId = uid && isValidUserId(uid) ? uid : null;
 
-    const { colors, strokeColor } = parseColorsAny(colorsRaw);
+    const parsedColors = parseColorsAny(colorsRaw);
+    const colors = parsedColors.colors;
+    const strokeColor = choosePreviewStrokeColor([parsedColors.strokeColor, ...colors]);
 
     let selectedCategories: string[] = [];
     try {
@@ -367,9 +343,10 @@ export async function POST(req: Request) {
       }
     } else {
       // No separate image was attached. Always create the card/game preview
-      // directly from the uploaded SVG. Use the original SVG rather than the
-      // white-fill game copy; otherwise some SVGs can become visually blank.
-      const previewSvgBuffer = Buffer.from(originalSvgData, 'utf8');
+      // directly from the uploaded SVG as white regions with a visible outline.
+      // This is also the fallback if browser-side rasterisation is unavailable.
+      const outlinePreviewSvg = buildOutlinePreviewSvg(originalSvgData, strokeColor);
+      const previewSvgBuffer = Buffer.from(outlinePreviewSvg, 'utf8');
 
       const meta = await sharp(previewSvgBuffer, { limitInputPixels: false }).metadata();
       const w = meta.width || 1024;

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { buildOutlinePreviewSvg, choosePreviewStrokeColor } from '@/lib/svgPreview';
 
 type Category = {
   _id: string;
@@ -70,8 +71,14 @@ async function dataUrlToFile(dataUrl: string, fileName: string, fallbackType: st
  * When it is off, a preview is still always generated from the SVG, matching
  * the original upload behaviour and avoiding an empty image card.
  */
-async function svgFileToPreviewFile(svgFile: File, maxDimension = 1024): Promise<File> {
-  const objectUrl = URL.createObjectURL(svgFile);
+async function svgFileToPreviewFile(
+  svgFile: File,
+  strokeColor = '#000000',
+  maxDimension = 1024,
+): Promise<File> {
+  const sourceSvg = await svgFile.text();
+  const outlineSvg = buildOutlinePreviewSvg(sourceSvg, strokeColor);
+  const objectUrl = URL.createObjectURL(new Blob([outlineSvg], { type: 'image/svg+xml' }));
 
   try {
     const image = new Image();
@@ -141,6 +148,7 @@ export default function UploadSvgPage() {
 
   const [svgFile, setSvgFile] = useState<File | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [autoPreviewFile, setAutoPreviewFile] = useState<File | null>(null);
   const [uploadImage, setUploadImage] = useState(false);
 
   const [colorsText, setColorsText] = useState('');
@@ -168,8 +176,28 @@ export default function UploadSvgPage() {
 
   const svgPreviewUrl = useObjectUrl(svgFile);
   const imagePreviewUrl = useObjectUrl(imageFile);
+  const autoPreviewUrl = useObjectUrl(autoPreviewFile);
 
   const { colors, invalid } = useMemo(() => parseColors(colorsText), [colorsText]);
+  const autoPreviewStroke = useMemo(() => choosePreviewStrokeColor(colors), [colors]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAutoPreviewFile(null);
+
+    if (!svgFile || uploadImage) return () => { cancelled = true; };
+
+    svgFileToPreviewFile(svgFile, autoPreviewStroke)
+      .then((preview) => {
+        if (!cancelled) setAutoPreviewFile(preview);
+      })
+      .catch((error) => {
+        // Upload remains available because /api/svgdata has the same fallback.
+        console.warn('Could not render the automatic SVG preview in this browser.', error);
+      });
+
+    return () => { cancelled = true; };
+  }, [svgFile, uploadImage, autoPreviewStroke]);
 
   const filteredCategories = useMemo(() => {
     const q = categoryFilter.trim().toLowerCase();
@@ -343,7 +371,7 @@ export default function UploadSvgPage() {
       let previewFile: File | null = uploadImage && imageFile ? imageFile : null;
       if (!uploadImage) {
         try {
-          previewFile = await svgFileToPreviewFile(svgFile);
+          previewFile = await svgFileToPreviewFile(svgFile, autoPreviewStroke);
         } catch (previewError) {
           // The server route also has an SVG-to-WebP fallback, so do not block
           // an otherwise valid upload on an unusual browser SVG renderer issue.
@@ -459,9 +487,17 @@ export default function UploadSvgPage() {
               Attach a separate image file (JPG/PNG/WebP) (optional)
             </label>
             <div className="help">
-              Unchecked: a preview image is created automatically from the SVG. Checked: the selected image is used instead.
+              Unchecked: a white, high-contrast outline preview is created automatically from the SVG. Checked: the selected image is used instead.
             </div>
           </div>
+
+          {!uploadImage && autoPreviewUrl && (
+            <div style={{ marginTop: 12 }}>
+              <div className="help">Automatically generated outline preview</div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img className="preview" src={autoPreviewUrl} alt="Automatically generated SVG outline preview" />
+            </div>
+          )}
 
           {uploadImage && (
             <div style={{ marginTop: 10 }}>
