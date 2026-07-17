@@ -1,4 +1,6 @@
 const FALLBACK_STROKE = '#000000';
+const PREVIEW_STROKE_WIDTH_PX = 2.2;
+const MIN_STRONG_CONTRAST = 4.5;
 
 function expandHex(value: string): string | null {
   const match = String(value || '').trim().match(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
@@ -19,29 +21,35 @@ function relativeLuminance(hex: string): number {
   return (0.2126 * channels[0]) + (0.7152 * channels[1]) + (0.0722 * channels[2]);
 }
 
+function contrastAgainstWhite(hex: string): number {
+  return 1.05 / (relativeLuminance(hex) + 0.05);
+}
+
 /**
- * Pick the first palette colour that remains visible on white. Very light
- * palette colours fall back to black so an automatically generated preview
- * cannot turn into an apparently blank card.
+ * Select the darkest usable palette colour instead of the first barely-visible
+ * colour. A colour must meet normal-text contrast against white; otherwise the
+ * preview falls back to solid black.
  */
 export function choosePreviewStrokeColor(colors: readonly string[], fallback = FALLBACK_STROKE): string {
-  for (const value of colors) {
-    const color = expandHex(value);
-    if (!color) continue;
+  const candidates = colors
+    .map(expandHex)
+    .filter((value): value is string => Boolean(value))
+    .map((color) => ({ color, contrast: contrastAgainstWhite(color) }))
+    .sort((a, b) => b.contrast - a.contrast);
 
-    const contrastAgainstWhite = 1.05 / (relativeLuminance(color) + 0.05);
-    if (contrastAgainstWhite >= 2.25) return color;
+  if (candidates[0] && candidates[0].contrast >= MIN_STRONG_CONTRAST) {
+    return candidates[0].color;
   }
 
   return expandHex(fallback) || FALLBACK_STROKE;
 }
 
-function removePaintDeclarations(style: string): string {
+function removePreviewPaintDeclarations(style: string): string {
   return style
     .split(';')
     .map((declaration) => declaration.trim())
     .filter(Boolean)
-    .filter((declaration) => !/^(?:fill|fill-opacity|stroke|stroke-opacity)\s*:/i.test(declaration))
+    .filter((declaration) => !/^(?:fill|fill-opacity|stroke|stroke-opacity|stroke-width|opacity|vector-effect|filter|mix-blend-mode)\s*:/i.test(declaration))
     .join(';');
 }
 
@@ -49,20 +57,29 @@ function forceOutlineStyle(attributes: string, strokeColor: string): string {
   const selfClosing = /\/\s*$/.test(attributes);
   let next = attributes.replace(/\/\s*$/, '');
 
-  // Remove presentation attributes that could fight the inline preview style.
+  // Remove source paint, very thin widths, partial opacity and filters that can
+  // make the generated thumbnail look pale after SVG/WebP rasterisation.
   next = next.replace(
-    /\s(?:fill|fill-opacity|stroke|stroke-opacity)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
+    /\s(?:fill|fill-opacity|stroke|stroke-opacity|stroke-width|opacity|vector-effect|filter|mix-blend-mode)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
     '',
   );
 
-  // Match the original crisp thumbnail renderer: transparent/empty regions
-  // over a white background, with only the vector outlines visible.
-  const forcedPaint = `fill:none!important;stroke:${strokeColor}!important`;
+  const forcedPaint = [
+    'fill:none!important',
+    `stroke:${strokeColor}!important`,
+    `stroke-width:${PREVIEW_STROKE_WIDTH_PX}px!important`,
+    'stroke-opacity:1!important',
+    'opacity:1!important',
+    'vector-effect:non-scaling-stroke!important',
+    'filter:none!important',
+    'mix-blend-mode:normal!important',
+  ].join(';');
+
   const stylePattern = /\sstyle\s*=\s*(["'])([\s\S]*?)\1/i;
 
   if (stylePattern.test(next)) {
     next = next.replace(stylePattern, (_match, quote: string, existing: string) => {
-      const retained = removePaintDeclarations(existing);
+      const retained = removePreviewPaintDeclarations(existing);
       const combined = retained ? `${retained};${forcedPaint}` : forcedPaint;
       return ` style=${quote}${combined}${quote}`;
     });
@@ -73,10 +90,26 @@ function forceOutlineStyle(attributes: string, strokeColor: string): string {
   return `${next}${selfClosing ? ' /' : ''}`;
 }
 
+function clearContainerOpacity(attributes: string): string {
+  let next = attributes.replace(
+    /\s(?:opacity|fill-opacity|stroke-opacity|filter|mix-blend-mode)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
+    '',
+  );
+
+  const stylePattern = /\sstyle\s*=\s*(["'])([\s\S]*?)\1/i;
+  if (stylePattern.test(next)) {
+    next = next.replace(stylePattern, (_match, quote: string, existing: string) => {
+      const retained = removePreviewPaintDeclarations(existing);
+      return retained ? ` style=${quote}${retained}${quote}` : '';
+    });
+  }
+
+  return next;
+}
+
 /**
- * Convert an uploaded SVG into a safe, high-contrast card preview:
- * white background/fills, one visible outline colour, and no number labels.
- * The result can be rendered by either a browser canvas or Sharp/libvips.
+ * Convert an uploaded SVG into a high-contrast card preview: white background,
+ * solid dark outlines, no number labels and a fixed non-scaling line width.
  */
 export function buildOutlinePreviewSvg(svgSource: string, requestedStroke = FALLBACK_STROKE): string {
   const strokeColor = choosePreviewStrokeColor([requestedStroke]);
@@ -96,10 +129,17 @@ export function buildOutlinePreviewSvg(svgSource: string, requestedStroke = FALL
     .replace(/<tspan\b[\s\S]*?<\/tspan\s*>/gi, '')
     .replace(/<tspan\b[^>]*\/\s*>/gi, '');
 
+  // Opacity on a parent group still fades every child, even when each path is
+  // forced to full opacity. Remove those inherited fading/filter effects.
+  svg = svg.replace(/<(g|a)\b([^>]*)>/gi, (_match, tagName: string, attributes: string) => {
+    return `<${tagName}${clearContainerOpacity(attributes)}>`;
+  });
+
   svg = svg.replace(/<svg\b([^>]*)>/i, (_match, attributes: string) => {
-    const withNamespace = /\sxmlns\s*=/i.test(attributes)
-      ? attributes
-      : `${attributes} xmlns="http://www.w3.org/2000/svg"`;
+    const cleaned = clearContainerOpacity(attributes);
+    const withNamespace = /\sxmlns\s*=/i.test(cleaned)
+      ? cleaned
+      : `${cleaned} xmlns="http://www.w3.org/2000/svg"`;
     return `<svg${withNamespace}><rect data-preview-background="true" width="100%" height="100%" fill="#FFFFFF"/>`;
   });
 
@@ -115,7 +155,19 @@ export function buildOutlinePreviewSvg(svgSource: string, requestedStroke = FALL
 
   const finalStyle = `<style>
     svg { background: #FFFFFF !important; }
-    g.label, g.labels, [class*="label"], [id*="label"], text, tspan { display: none !important; }
+    g.label, g.labels, [class*="label"], [id*="label"], text, tspan,
+    #border-junctions, [id*="border-junction"] { display: none !important; }
+    path, polygon, polyline, rect:not([data-preview-background]), circle, ellipse, line, use {
+      fill: none !important;
+      stroke: ${strokeColor} !important;
+      stroke-width: ${PREVIEW_STROKE_WIDTH_PX}px !important;
+      stroke-opacity: 1 !important;
+      opacity: 1 !important;
+      vector-effect: non-scaling-stroke !important;
+      filter: none !important;
+      mix-blend-mode: normal !important;
+      shape-rendering: geometricPrecision;
+    }
   </style>`;
 
   if (/<\/svg\s*>/i.test(svg)) {
