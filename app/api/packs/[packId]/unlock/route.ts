@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
 import { verifyFirebaseAuth } from '@/lib/auth';
-import { canUnlockPack, cleanPackId, ensureAndSeedPacks, getDownloadedPackState, getOwnedPackIds, serializePack } from '@/lib/packs';
+import { canUnlockPack, cleanPackId, ensureAndSeedPacks, getDownloadedPackState, getOwnedPackIds, serializePack, withResolvedPackImages } from '@/lib/packs';
 
 export const runtime = 'nodejs';
 
@@ -22,6 +22,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ packId: st
   if (!auth.ok) return json({ success: false, error: 'Unauthorized' }, 401);
 
   try {
+    const origin = new URL(request.url).origin;
     const body = await request.json().catch(() => ({}));
     const { packId: rawPackId } = await ctx.params;
     const packId = cleanPackId(rawPackId);
@@ -66,7 +67,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ packId: st
 
     const ownedPackIds = await getOwnedPackIds(db, auth.uid);
     const downloadedState = await getDownloadedPackState(db, auth.uid);
-    return json({ success: true, owned: true, pack: serializePack(pack, ownedPackIds, downloadedState.get(packId)) });
+    return json({
+      success: true,
+      owned: true,
+      pack: serializePack(
+        await withResolvedPackImages(db, pack),
+        ownedPackIds,
+        downloadedState.get(packId),
+        origin
+      ),
+    });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 500);
   }

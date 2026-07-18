@@ -199,20 +199,36 @@ export function packSizeLabel(bytes: unknown): string {
   return `${Math.round((size / (1024 * 1024)) * 10) / 10} MB`;
 }
 
-export function serializePack(pack: any, ownedPackIds: Set<string> = new Set(), downloadState?: any) {
+function packImagePreviewUrl(imageId: unknown, baseUrl?: string | null): string | null {
+  const id = String(imageId || '').trim();
+  const origin = String(baseUrl || '').trim().replace(/\/$/, '');
+  if (!id || !origin) return null;
+  return `${origin}/api/images/${encodeURIComponent(id)}/download?kind=webp&inline=1`;
+}
+
+export function serializePack(
+  pack: any,
+  ownedPackIds: Set<string> = new Set(),
+  downloadState?: any,
+  baseUrl?: string | null
+) {
   const packId = String(pack?.packId || '');
   const owned = ownedPackIds.has(packId);
   const downloaded = Boolean(downloadState?.downloaded);
+  const resolvedImageIds = normalizeImageIds(pack?.resolvedImageIds || pack?.imageIds);
+  const automaticCoverImageUrl = packImagePreviewUrl(resolvedImageIds[0], baseUrl);
   return {
     packId,
     title: String(pack?.title || packId),
     description: String(pack?.description || ''),
-    coverImageUrl: pack?.coverImageUrl || null,
+    // Keep a manually configured cover. Otherwise show the first image that
+    // currently belongs to the pack, including images added by level auto-sync.
+    coverImageUrl: pack?.coverImageUrl || automaticCoverImageUrl,
     type: normalizePackType(pack?.type),
     priceCoins: parseNonNegativeInt(pack?.priceCoins, 0, 1_000_000),
     requiredStreak: pack?.requiredStreak == null ? null : parseNonNegativeInt(pack.requiredStreak, 0, 3650),
     requiredAchievementId: pack?.requiredAchievementId || null,
-    imageCount: Array.isArray(pack?.resolvedImageIds) ? pack.resolvedImageIds.length : (Array.isArray(pack?.imageIds) ? pack.imageIds.length : 0),
+    imageCount: resolvedImageIds.length,
     manualImageCount: Array.isArray(pack?.imageIds) ? pack.imageIds.length : 0,
     mappedLevelIds: normalizeLevelIds(pack?.mappedLevelIds),
     autoSyncLevelImages: pack?.autoSyncLevelImages === true,
@@ -317,7 +333,7 @@ export function buildPackManifest(pack: any, baseUrl: string) {
       imageId,
       title: imageId,
       svgUrl: `${origin}/api/svgdata?id=${encodeURIComponent(imageId)}`,
-      previewUrl: `${origin}/api/images/${encodeURIComponent(imageId)}`,
+      previewUrl: packImagePreviewUrl(imageId, origin),
       downloadSvgUrl: `${origin}/api/images/${encodeURIComponent(imageId)}/download?kind=svg`,
       paletteUrl: `${origin}/api/images/${encodeURIComponent(imageId)}/download?kind=palette`,
       levelId: String(pack?.levelId || ''),

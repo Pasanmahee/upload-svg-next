@@ -29,6 +29,7 @@ export async function OPTIONS() {
 
 export async function GET(request: Request) {
   try {
+    const origin = new URL(request.url).origin;
     const client = await getMongoClient();
     const db = client.db(getDbName());
     await ensureAndSeedPacks(db);
@@ -44,7 +45,14 @@ export async function GET(request: Request) {
     return json({
       success: true,
       signedIn: Boolean(uid),
-      packs: (await withResolvedPacksImages(db, packs as any[])).map((pack: any) => serializePack(pack, ownedPackIds, downloadedState.get(String(pack.packId || '')))),
+      packs: (await withResolvedPacksImages(db, packs as any[])).map((pack: any) =>
+        serializePack(
+          pack,
+          ownedPackIds,
+          downloadedState.get(String(pack.packId || '')),
+          origin
+        )
+      ),
     });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 500);

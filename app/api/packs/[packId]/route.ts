@@ -19,6 +19,7 @@ export async function OPTIONS() { return new NextResponse(null, { status: 204, h
 
 export async function GET(request: Request, ctx: { params: Promise<{ packId: string }> }) {
   try {
+    const origin = new URL(request.url).origin;
     const { packId: rawPackId } = await ctx.params;
     const packId = cleanPackId(rawPackId);
     const client = await getMongoClient();
@@ -30,7 +31,15 @@ export async function GET(request: Request, ctx: { params: Promise<{ packId: str
     const uid = await getUidIfPresent(request);
     const ownedPackIds = await getOwnedPackIds(db, uid);
     const downloadedState = await getDownloadedPackState(db, uid);
-    return json({ success: true, pack: serializePack(await withResolvedPackImages(db, pack), ownedPackIds, downloadedState.get(packId)) });
+    return json({
+      success: true,
+      pack: serializePack(
+        await withResolvedPackImages(db, pack),
+        ownedPackIds,
+        downloadedState.get(packId),
+        origin
+      ),
+    });
   } catch (err) {
     return json({ success: false, error: getErrorMessage(err) }, 500);
   }

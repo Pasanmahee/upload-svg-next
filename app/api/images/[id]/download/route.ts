@@ -200,12 +200,16 @@ function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
   ) as ArrayBuffer;
 }
 
-function attachmentHeaders(filename: string, contentType: string): HeadersInit {
+function fileHeaders(
+  filename: string,
+  contentType: string,
+  disposition: "attachment" | "inline" = "attachment",
+): HeadersInit {
   const safe = safeFilename(filename);
   return {
     ...CORS_HEADERS,
     "Content-Type": contentType,
-    "Content-Disposition": `attachment; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(safe)}`,
+    "Content-Disposition": `${disposition}; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(safe)}`,
   };
 }
 
@@ -248,6 +252,7 @@ export async function GET(
 
   const { searchParams } = new URL(request.url);
   const kind = parseKind(searchParams.get("kind"));
+  const inline = searchParams.get("inline") === "1";
   if (!kind) {
     return NextResponse.json(
       { error: "Invalid download kind" },
@@ -309,7 +314,7 @@ export async function GET(
       };
       const buffer = Buffer.from(JSON.stringify(payload, null, 2), "utf8");
       return new NextResponse(bufferToArrayBuffer(buffer), {
-        headers: attachmentHeaders(
+        headers: fileHeaders(
           `palette-${shortId}.json`,
           "application/json; charset=utf-8",
         ),
@@ -319,13 +324,17 @@ export async function GET(
     if (kind === "svg") {
       const file = await readStoredFile((doc as any).svgData, "svg");
       return new NextResponse(bufferToArrayBuffer(file.buffer), {
-        headers: attachmentHeaders(`image-${shortId}.svg`, file.contentType),
+        headers: fileHeaders(`image-${shortId}.svg`, file.contentType),
       });
     }
 
     const file = await readStoredFile((doc as any).pngData, "webp");
     return new NextResponse(bufferToArrayBuffer(file.buffer), {
-      headers: attachmentHeaders(`original-${shortId}.webp`, file.contentType),
+      headers: fileHeaders(
+        `original-${shortId}.webp`,
+        file.contentType,
+        inline ? "inline" : "attachment",
+      ),
     });
   } catch (err: unknown) {
     console.error("images/[id]/download GET error:", err);
