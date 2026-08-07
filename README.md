@@ -23,6 +23,9 @@ Next.js (App Router) backend + simple UI for **image → SVG (paint-by-number fa
 
 Image processing uses deterministic random seed `42` in both browser and legacy
 server paths, so identical inputs and settings generate consistent clustering.
+K-means writes opaque RGBA output, facet merging uses perceptual CIEDE2000
+distance, and generated SVGs separate interactive fills, unique shared borders,
+and labels into explicit `fills`, `borders`, and `labels` groups.
 
 ## What was added
 

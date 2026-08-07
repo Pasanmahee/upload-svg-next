@@ -3,7 +3,7 @@
  */
 import { delay, IMap, RGB } from "./common";
 import { KMeans, Vector } from "./lib/clustering";
-import { hslToRgb, lab2rgb, rgb2lab, rgbToHsl } from "./lib/colorconversion";
+import { ciede2000, hslToRgb, lab2rgb, rgb2lab, rgbToHsl } from "./lib/colorconversion";
 import { ClusteringColorSpace, Settings } from "./settings";
 import { Uint8Array2D } from "./structs/typedarrays";
 import { Random } from "./random";
@@ -220,6 +220,7 @@ export class ColorReducer {
                     outputImgData.data[dataOffset++] = rgb[0];
                     outputImgData.data[dataOffset++] = rgb[1];
                     outputImgData.data[dataOffset++] = rgb[2];
+                    outputImgData.data[dataOffset++] = 255;
                 }
             }
         }
@@ -230,16 +231,13 @@ export class ColorReducer {
      */
     public static buildColorDistanceMatrix(colorsByIndex: RGB[]) {
         const colorDistances: number[][] = new Array(colorsByIndex.length);
+        const labColors = colorsByIndex.map((color) => rgb2lab(color));
         for (let j: number = 0; j < colorsByIndex.length; j++) {
             colorDistances[j] = new Array(colorDistances.length);
         }
         for (let j: number = 0; j < colorsByIndex.length; j++) {
             for (let i: number = j; i < colorsByIndex.length; i++) {
-                const c1 = colorsByIndex[j];
-                const c2 = colorsByIndex[i];
-                const distance = Math.sqrt((c1[0] - c2[0]) * (c1[0] - c2[0]) +
-                    (c1[1] - c2[1]) * (c1[1] - c2[1]) +
-                    (c1[2] - c2[2]) * (c1[2] - c2[2]));
+                const distance = ciede2000(labColors[j], labColors[i]);
                 colorDistances[i][j] = distance;
                 colorDistances[j][i] = distance;
             }

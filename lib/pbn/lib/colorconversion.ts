@@ -115,3 +115,92 @@ export function rgb2lab(rgb: number[]) {
 
     return [(116 * y) - 16, 500 * (x - y), 200 * (y - z)];
 }
+
+const degreesToRadians = (degrees: number) => degrees * Math.PI / 180;
+const radiansToDegrees = (radians: number) => radians * 180 / Math.PI;
+
+function hueAngleDegrees(a: number, b: number) {
+    if (a === 0 && b === 0) {
+        return 0;
+    }
+    const angle = radiansToDegrees(Math.atan2(b, a));
+    return angle >= 0 ? angle : angle + 360;
+}
+
+/**
+ * Calculates the perceptual CIEDE2000 difference between two CIELAB colours.
+ * Implementation follows Sharma, Wu and Dalal (2005), with unit weighting
+ * factors for graphic-art colour comparison: https://doi.org/10.1002/col.20070
+ */
+export function ciede2000(lab1: number[], lab2: number[]) {
+    const [l1, a1, b1] = lab1;
+    const [l2, a2, b2] = lab2;
+
+    const c1 = Math.hypot(a1, b1);
+    const c2 = Math.hypot(a2, b2);
+    const averageC = (c1 + c2) / 2;
+    const averageC7 = Math.pow(averageC, 7);
+    const g = 0.5 * (1 - Math.sqrt(averageC7 / (averageC7 + Math.pow(25, 7))));
+
+    const a1Prime = (1 + g) * a1;
+    const a2Prime = (1 + g) * a2;
+    const c1Prime = Math.hypot(a1Prime, b1);
+    const c2Prime = Math.hypot(a2Prime, b2);
+    const h1Prime = hueAngleDegrees(a1Prime, b1);
+    const h2Prime = hueAngleDegrees(a2Prime, b2);
+
+    const deltaLPrime = l2 - l1;
+    const deltaCPrime = c2Prime - c1Prime;
+
+    let deltaHPrimeDegrees = 0;
+    if (c1Prime * c2Prime !== 0) {
+        deltaHPrimeDegrees = h2Prime - h1Prime;
+        if (deltaHPrimeDegrees > 180) {
+            deltaHPrimeDegrees -= 360;
+        } else if (deltaHPrimeDegrees < -180) {
+            deltaHPrimeDegrees += 360;
+        }
+    }
+
+    const deltaHPrime = 2 * Math.sqrt(c1Prime * c2Prime) *
+        Math.sin(degreesToRadians(deltaHPrimeDegrees) / 2);
+    const averageLPrime = (l1 + l2) / 2;
+    const averageCPrime = (c1Prime + c2Prime) / 2;
+
+    let averageHPrime = h1Prime + h2Prime;
+    if (c1Prime * c2Prime !== 0) {
+        const hueDifference = Math.abs(h1Prime - h2Prime);
+        if (hueDifference <= 180) {
+            averageHPrime = (h1Prime + h2Prime) / 2;
+        } else if (h1Prime + h2Prime < 360) {
+            averageHPrime = (h1Prime + h2Prime + 360) / 2;
+        } else {
+            averageHPrime = (h1Prime + h2Prime - 360) / 2;
+        }
+    }
+
+    const t = 1
+        - 0.17 * Math.cos(degreesToRadians(averageHPrime - 30))
+        + 0.24 * Math.cos(degreesToRadians(2 * averageHPrime))
+        + 0.32 * Math.cos(degreesToRadians(3 * averageHPrime + 6))
+        - 0.20 * Math.cos(degreesToRadians(4 * averageHPrime - 63));
+    const deltaTheta = 30 * Math.exp(-Math.pow((averageHPrime - 275) / 25, 2));
+    const averageCPrime7 = Math.pow(averageCPrime, 7);
+    const rC = 2 * Math.sqrt(averageCPrime7 / (averageCPrime7 + Math.pow(25, 7)));
+    const lightnessOffset = averageLPrime - 50;
+    const sL = 1 + (0.015 * lightnessOffset * lightnessOffset) /
+        Math.sqrt(20 + lightnessOffset * lightnessOffset);
+    const sC = 1 + 0.045 * averageCPrime;
+    const sH = 1 + 0.015 * averageCPrime * t;
+    const rT = -Math.sin(degreesToRadians(2 * deltaTheta)) * rC;
+
+    const lTerm = deltaLPrime / sL;
+    const cTerm = deltaCPrime / sC;
+    const hTerm = deltaHPrime / sH;
+    return Math.sqrt(
+        lTerm * lTerm +
+        cTerm * cTerm +
+        hTerm * hTerm +
+        rT * cTerm * hTerm,
+    );
+}

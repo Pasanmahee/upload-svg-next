@@ -85,40 +85,6 @@ function rdp(pts: Point[], eps: number): Point[] {
   return [pts[0], pts[end]];
 }
 
-function simplifyClosedPathRDP(pts: Point[], eps: number): Point[] {
-  if (!pts || pts.length < 4 || eps <= 0) return pts;
-  let ring = pts.slice();
-  if (pointEquals(ring[0], ring[ring.length - 1])) {
-    ring = ring.slice(0, ring.length - 1);
-  }
-  const n = ring.length;
-  if (n < 4) return pts;
-
-  let bestIdx = 0;
-  let bestScore = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < n; i++) {
-    const pPrev = ring[(i - 1 + n) % n];
-    const pCur = ring[i];
-    const pNext = ring[(i + 1) % n];
-    const v1x = pPrev.x - pCur.x;
-    const v1y = pPrev.y - pCur.y;
-    const v2x = pNext.x - pCur.x;
-    const v2y = pNext.y - pCur.y;
-    const l1 = Math.hypot(v1x, v1y);
-    const l2 = Math.hypot(v2x, v2y);
-    if (l1 < 1e-6 || l2 < 1e-6) continue;
-    const cos = (v1x * v2x + v1y * v2y) / (l1 * l2);
-    const c = Math.max(-1, Math.min(1, cos));
-    const score = Math.abs(c + 1);
-    if (score < bestScore) {
-      bestScore = score;
-      bestIdx = i;
-    }
-  }
-
-  return rdp(ring.slice(bestIdx).concat(ring.slice(0, bestIdx)), eps);
-}
-
 function buildQuadraticPath(newpath: Point[], sizeMultiplier: number): string {
   let data = `M ${fmt(newpath[0].x * sizeMultiplier)} ${fmt(newpath[0].y * sizeMultiplier)} `;
   for (let i = 1; i < newpath.length; i++) {
@@ -172,6 +138,78 @@ function buildCubicCatmullPath(newpath: Point[], sizeMultiplier: number): string
   return data;
 }
 
+function buildOpenCubicCatmullPath(points: Point[], sizeMultiplier: number): string {
+  if (points.length < 3) {
+    return buildQuadraticPath(points, sizeMultiplier);
+  }
+
+  let data = `M ${fmt(points[0].x * sizeMultiplier)} ${fmt(points[0].y * sizeMultiplier)} `;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] || points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] || p2;
+    const f1 = cornerFactor(p0, p1, p2);
+    const f2 = cornerFactor(p1, p2, p3);
+    const c1x = p1.x + ((p2.x - p0.x) / 6) * f1;
+    const c1y = p1.y + ((p2.y - p0.y) / 6) * f1;
+    const c2x = p2.x - ((p3.x - p1.x) / 6) * f2;
+    const c2y = p2.y - ((p3.y - p1.y) / 6) * f2;
+    data += `C ${fmt(c1x * sizeMultiplier)} ${fmt(c1y * sizeMultiplier)} ${fmt(c2x * sizeMultiplier)} ${fmt(c2y * sizeMultiplier)} ${fmt(p2.x * sizeMultiplier)} ${fmt(p2.y * sizeMultiplier)} `;
+  }
+  return data;
+}
+
+function buildOpenPath(points: Point[], sizeMultiplier: number, curveMode: string): string {
+  return curveMode === 'cubic_catmull'
+    ? buildOpenCubicCatmullPath(points, sizeMultiplier)
+    : buildQuadraticPath(points, sizeMultiplier);
+}
+
+function buildFacetPointPath(
+  facet: any,
+  segmentPoints: Map<any, Point[]>,
+): Point[] {
+  const path: Point[] = [];
+  const addPoint = (point: Point) => {
+    const previous = path[path.length - 1];
+    if (!previous || !pointEquals(previous, point)) {
+      path.push({ x: point.x, y: point.y });
+    }
+  };
+
+  let lastSegment: any = null;
+  for (const segment of facet.borderSegments || []) {
+    const points = segmentPoints.get(segment.originalSegment) || segment.originalSegment?.points || [];
+    if (lastSegment) {
+      const lastPoints = segmentPoints.get(lastSegment.originalSegment) || lastSegment.originalSegment?.points || [];
+      if (lastPoints.length > 0) {
+        addPoint(lastSegment.reverseOrder ? lastPoints[0] : lastPoints[lastPoints.length - 1]);
+      }
+    }
+
+    if (segment.reverseOrder) {
+      for (let i = points.length - 1; i >= 0; i--) addPoint(points[i]);
+    } else {
+      for (const point of points) addPoint(point);
+    }
+    lastSegment = segment;
+  }
+  return path;
+}
+
+function darkenedAverageColor(colors: RGB[]): string {
+  if (colors.length === 0) return '#000';
+  const totals = colors.reduce(
+    (sum, color) => [sum[0] + color[0], sum[1] + color[1], sum[2] + color[2]],
+    [0, 0, 0],
+  );
+  const r = Math.round((totals[0] / colors.length) * 0.45);
+  const g = Math.round((totals[1] / colors.length) * 0.45);
+  const b = Math.round((totals[2] / colors.length) * 0.45);
+  return `rgb(${r},${g},${b})`;
+}
+
 export function rgbToHex(color: number[]): string {
   return `#${((1 << 24) + (color[0] << 16) + (color[1] << 8) + color[2]).toString(16).slice(1).toUpperCase()}`;
 }
@@ -183,8 +221,8 @@ export function extractColorPalette(colorsByIndex: number[][]): string[] {
 /**
  * Converts computed facets to an SVG string. This now mirrors the uploaded
  * browser SVG generator's smoother output: compact numeric formatting,
- * optional RDP simplification, Catmull-Rom cubic curves, rounded strokes,
- * label halo support, and junction caps.
+ * shared-segment RDP simplification, Catmull-Rom cubic curves, separate fill,
+ * unique-border and label layers, rounded strokes, label halos, and junction caps.
  */
 export async function createSVG(
   facetResult: FacetResult,
@@ -221,6 +259,42 @@ export async function createSVG(
   svgString += `<svg width="${fmt(svgWidth)}" height="${fmt(svgHeight)}" viewBox="0 0 ${fmt(svgWidth)} ${fmt(svgHeight)}" xmlns="${xmlns}" shape-rendering="geometricPrecision" preserveAspectRatio="xMidYMid meet">`;
 
   const facets = facetResult.facets;
+  const segmentPoints = new Map<any, Point[]>();
+  const segmentUsages = new Map<any, {
+    source: any;
+    colors: RGB[];
+    facetIds: Set<number>;
+  }>();
+
+  for (const facet of facets as any[]) {
+    if (!facet?.borderSegments) continue;
+    const facetColor = colorsByIndex[facet.color] || ([255, 255, 255] as RGB);
+    for (const wrapper of facet.borderSegments) {
+      const source = wrapper?.originalSegment;
+      if (!source?.points || source.points.length < 2) continue;
+
+      if (!segmentPoints.has(source)) {
+        const originalPoints = source.points.map((point: Point) => ({ x: point.x, y: point.y }));
+        const simplified = borderSimplifyEpsilon > 0 && originalPoints.length > 2
+          ? rdp(originalPoints, borderSimplifyEpsilon)
+          : originalPoints;
+        segmentPoints.set(source, simplified.length >= 2 ? simplified : originalPoints);
+      }
+
+      let usage = segmentUsages.get(source);
+      if (!usage) {
+        usage = { source, colors: [], facetIds: new Set<number>() };
+        segmentUsages.set(source, usage);
+      }
+      if (!usage.facetIds.has(facet.id)) {
+        usage.facetIds.add(facet.id);
+        usage.colors.push(facetColor);
+      }
+    }
+  }
+
+  let fillMarkup = '';
+  let labelMarkup = '';
   let count = 0;
   for (const f of facets as any[]) {
     if (f == null || f.borderSegments.length === 0) {
@@ -228,7 +302,7 @@ export async function createSVG(
       continue;
     }
 
-    let newpath: Point[] = f.getFullPathFromBorderSegments(false) as Point[];
+    let newpath = buildFacetPointPath(f, segmentPoints);
     if (!newpath || newpath.length < 2) {
       count++;
       continue;
@@ -238,13 +312,6 @@ export async function createSVG(
       newpath = newpath.concat([newpath[0]]);
     }
 
-    if (borderSimplifyEpsilon > 0 && newpath.length > 6) {
-      newpath = simplifyClosedPathRDP(newpath, borderSimplifyEpsilon);
-      if (!pointEquals(newpath[0], newpath[newpath.length - 1])) {
-        newpath.push(newpath[0]);
-      }
-    }
-
     let data = curveMode === 'cubic_catmull'
       ? buildCubicCatmullPath(newpath, sizeMultiplier)
       : buildQuadraticPath(newpath, sizeMultiplier);
@@ -252,45 +319,26 @@ export async function createSVG(
 
     const fillRgb = colorsByIndex[f.color] || [255, 255, 255];
     const fillColor = `rgb(${fillRgb[0]},${fillRgb[1]},${fillRgb[2]})`;
-    const isOuter = newpath.some((p) => p.x <= 0.01 || p.y <= 0.01 || p.x >= facetResult.width - 0.01 || p.y >= facetResult.height - 0.01);
-    const sw = Math.max(0.1, isOuter ? outerStrokeWidth : innerStrokeWidth);
-
-    let strokeColor = 'none';
-    let strokeOpacity = '1';
-    let strokeWidth = '1px';
-    if (showBorders) {
-      if (strokeColorMode === 'soft' && fillFacets) {
-        const r = Math.max(0, Math.min(255, Math.round(fillRgb[0] * 0.45)));
-        const g = Math.max(0, Math.min(255, Math.round(fillRgb[1] * 0.45)));
-        const b = Math.max(0, Math.min(255, Math.round(fillRgb[2] * 0.45)));
-        strokeColor = `rgb(${r},${g},${b})`;
-      } else {
-        strokeColor = '#000';
-      }
-      strokeOpacity = String(strokeOpacityClamped);
-      strokeWidth = `${fmt(sw)}px`;
-    } else if (fillFacets) {
-      strokeColor = fillColor;
-      strokeOpacity = '1';
-      strokeWidth = '1px';
-    }
+    const seamStroke = !showBorders && fillFacets ? fillColor : 'none';
 
     const pathAttrs = [
+      'class="facet"',
       `data-facetId="${escapeAttr(String(f.id))}"`,
       `data-color-index="${escapeAttr(String(f.color))}"`,
       `data-number="${escapeAttr(String(f.color))}"`,
       `d="${escapeAttr(data)}"`,
       `fill="${fillFacets ? fillColor : 'none'}"`,
-      `stroke="${strokeColor}"`,
-      `stroke-opacity="${strokeOpacity}"`,
-      `stroke-width="${strokeWidth}"`,
+      `stroke="${seamStroke}"`,
+      `stroke-opacity="1"`,
+      `stroke-width="${seamStroke === 'none' ? '0' : '1px'}"`,
       `stroke-linejoin="round"`,
       `stroke-linecap="round"`,
       `stroke-miterlimit="1"`,
     ];
-    if (nonScalingStroke) pathAttrs.push('vector-effect="non-scaling-stroke"');
-    if (paintOrderStrokeFill) pathAttrs.push('paint-order="stroke fill"');
-    svgString += `<path ${pathAttrs.join(' ')}></path>`;
+    if (!fillFacets) pathAttrs.push('pointer-events="all"');
+    if (seamStroke !== 'none' && nonScalingStroke) pathAttrs.push('vector-effect="non-scaling-stroke"');
+    if (seamStroke !== 'none' && paintOrderStrokeFill) pathAttrs.push('paint-order="stroke fill"');
+    fillMarkup += `<path ${pathAttrs.join(' ')}></path>`;
 
     if (showLabels && f.labelBounds) {
       const nrOfDigits = String(f.color).length;
@@ -301,10 +349,10 @@ export async function createSVG(
       const labelStroke = labelHalo
         ? ` stroke="#fff" stroke-width="${fmt(Math.max(2, fontSize / 18))}" paint-order="stroke fill" stroke-linejoin="round"`
         : '';
-      svgString += `<g class="label" data-number="${escapeAttr(String(f.color))}" transform="translate(${fmt(labelOffsetX)},${fmt(labelOffsetY)})">`;
-      svgString += `<svg width="${fmt(labelWidth)}" height="${fmt(labelHeight)}" overflow="visible" viewBox="-50 -50 100 100" preserveAspectRatio="xMidYMid meet">`;
-      svgString += `<text font-family="Tahoma" font-size="${fmt(fontSize / nrOfDigits)}" dominant-baseline="middle" text-anchor="middle" fill="${escapeAttr(fontColor)}"${labelStroke}>${escapeAttr(String(f.color))}</text>`;
-      svgString += `</svg></g>`;
+      labelMarkup += `<g class="label" data-number="${escapeAttr(String(f.color))}" transform="translate(${fmt(labelOffsetX)},${fmt(labelOffsetY)})">`;
+      labelMarkup += `<svg width="${fmt(labelWidth)}" height="${fmt(labelHeight)}" overflow="visible" viewBox="-50 -50 100 100" preserveAspectRatio="xMidYMid meet">`;
+      labelMarkup += `<text font-family="Tahoma" font-size="${fmt(fontSize / nrOfDigits)}" dominant-baseline="middle" text-anchor="middle" fill="${escapeAttr(fontColor)}"${labelStroke}>${escapeAttr(String(f.color))}</text>`;
+      labelMarkup += `</svg></g>`;
     }
 
     if (onUpdate && count % 100 === 0) {
@@ -313,8 +361,10 @@ export async function createSVG(
     count++;
   }
 
+  svgString += `<g id="fills">${fillMarkup}</g>`;
+
+  let borderMarkup = '';
   if (showBorders) {
-    const seen = new Set<any>();
     const counts = new Map<string, number>();
     const pointsByKey = new Map<string, Point>();
     const keyOf = (p: Point) => `${Math.round(p.x * 1000)},${Math.round(p.y * 1000)}`;
@@ -324,19 +374,37 @@ export async function createSVG(
       if (!pointsByKey.has(k)) pointsByKey.set(k, p);
     };
 
-    for (const f of facets as any[]) {
-      if (!f?.borderSegments) continue;
-      for (const segWrapper of f.borderSegments) {
-        const seg = segWrapper?.originalSegment ?? segWrapper;
-        if (!seg || seen.has(seg) || !seg.points || seg.points.length < 2) continue;
-        seen.add(seg);
-        add(seg.points[0]);
-        add(seg.points[seg.points.length - 1]);
-      }
+    let borderIndex = 0;
+    for (const usage of segmentUsages.values()) {
+      const points = segmentPoints.get(usage.source) || [];
+      if (points.length < 2) continue;
+      const isOuter = usage.source.neighbour === -1;
+      const strokeWidth = Math.max(0.1, isOuter ? outerStrokeWidth : innerStrokeWidth);
+      const strokeColor = strokeColorMode === 'soft' && fillFacets
+        ? darkenedAverageColor(usage.colors)
+        : '#000';
+      const borderAttrs = [
+        'class="border"',
+        `data-border-index="${borderIndex}"`,
+        `data-outer="${isOuter ? 'true' : 'false'}"`,
+        `d="${escapeAttr(buildOpenPath(points, sizeMultiplier, curveMode))}"`,
+        'fill="none"',
+        `stroke="${strokeColor}"`,
+        `stroke-opacity="${strokeOpacityClamped}"`,
+        `stroke-width="${fmt(strokeWidth)}px"`,
+        'stroke-linejoin="round"',
+        'stroke-linecap="round"',
+        'stroke-miterlimit="1"',
+      ];
+      if (nonScalingStroke) borderAttrs.push('vector-effect="non-scaling-stroke"');
+      borderMarkup += `<path ${borderAttrs.join(' ')}></path>`;
+      add(points[0]);
+      add(points[points.length - 1]);
+      borderIndex++;
     }
 
     let caps = '';
-    const joinRadius = 0.55;
+    const joinRadius = Math.max(0.1, innerStrokeWidth / 2);
     for (const [k, c] of counts.entries()) {
       if (c >= 3) {
         const p = pointsByKey.get(k);
@@ -344,8 +412,11 @@ export async function createSVG(
         caps += `<circle cx="${fmt(p.x * sizeMultiplier)}" cy="${fmt(p.y * sizeMultiplier)}" r="${fmt(joinRadius)}" fill="#000" fill-opacity="${strokeColorMode !== 'ink' ? strokeOpacityClamped * 0.6 : strokeOpacityClamped}"></circle>`;
       }
     }
-    if (caps) svgString += `<g id="border-junctions" pointer-events="none">${caps}</g>`;
+    if (caps) borderMarkup += `<g id="border-junctions">${caps}</g>`;
   }
+
+  svgString += `<g id="borders" pointer-events="none">${borderMarkup}</g>`;
+  svgString += `<g id="labels">${labelMarkup}</g>`;
 
   if (onUpdate) onUpdate(1);
   svgString += '</svg>';
