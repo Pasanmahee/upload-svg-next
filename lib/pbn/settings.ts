@@ -1,5 +1,7 @@
 import { RGB } from "./common";
 
+export const DETERMINISTIC_RANDOM_SEED = 42;
+
 export enum ClusteringColorSpace {
     RGB = 0,
     HSL = 1,
@@ -37,5 +39,6 @@ export class Settings {
     public resizeImageWidth: number = 1024;
     public resizeImageHeight: number = 1024;
 
-    public randomSeed: number = new Date().getTime();
+    // Keep identical uploads and settings reproducible across browser runs.
+    public randomSeed: number = DETERMINISTIC_RANDOM_SEED;
 }

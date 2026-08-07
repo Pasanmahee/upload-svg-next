@@ -451,6 +451,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     }
 
     const processOptions = {
+      randomSeed: settings.randomSeed,
       kMeansNrOfClusters: settings.kMeansNrOfClusters,
       kMeansMinDeltaDifference: settings.kMeansMinDeltaDifference,
       kMeansClusteringColorSpace: settings.kMeansClusteringColorSpace,

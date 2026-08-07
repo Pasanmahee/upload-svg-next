@@ -21,6 +21,9 @@ npm run build
 
 Next.js (App Router) backend + simple UI for **image → SVG (paint-by-number facets)** and **SVG → PNG** generation.
 
+Image processing uses deterministic random seed `42` in both browser and legacy
+server paths, so identical inputs and settings generate consistent clustering.
+
 ## What was added
 
 - `POST /api/process-image/:userId/save` — saves browser-generated SVG/preview drafts without repeating image processing on Vercel.

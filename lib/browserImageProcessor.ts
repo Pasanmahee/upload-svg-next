@@ -350,6 +350,7 @@ export async function processImageInBrowser(
     processingLocation: 'browser',
     sourceWidth: imgData.width,
     sourceHeight: imgData.height,
+    randomSeed: settings.randomSeed,
     kMeansNrOfClusters: settings.kMeansNrOfClusters,
     kMeansMinDeltaDifference: settings.kMeansMinDeltaDifference,
     kMeansClusteringColorSpace: settings.kMeansClusteringColorSpace,

@@ -1,5 +1,5 @@
 {
-    "randomSeed": 7707,
+    "randomSeed": 42,
     "kMeansNrOfClusters": 16,
     "kMeansMinDeltaDifference": 1,
     "kMeansClusteringColorSpace": 2,
