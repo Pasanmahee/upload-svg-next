@@ -2,7 +2,7 @@ import sharp from 'sharp';
 import settingsJson from '@/settings.json';
 import { logger } from '@/lib/logger';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { getBucketName, getStorage } from '@/lib/gcs';
+import { getBucketName, getStorage, resolveGcsReadUrl } from '@/lib/gcs';
 import { ColorReducer } from '@/lib/pbn/colorreductionmanagement';
 import { FacetCreator } from '@/lib/pbn/facetCreator';
 import { FacetReducer } from '@/lib/pbn/facetReducer';
@@ -502,6 +502,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
         draftId = draftRes.insertedId.toString();
       }
 
+      const origin = new URL(request.url).origin;
+      const storedGcsSvg = publicUrlSvg && !publicUrlSvg.startsWith('data:') ? publicUrlSvg : null;
+      const storedGcsPng = publicUrlPng && !publicUrlPng.startsWith('data:') ? publicUrlPng : null;
+      const readableGcsSvg = storedGcsSvg ? await resolveGcsReadUrl(storedGcsSvg, origin) : null;
+      const readableGcsPng = storedGcsPng ? await resolveGcsReadUrl(storedGcsPng, origin) : null;
+
       return json({
         message: 'Image processed as an upload draft. It was not added to My Works.',
         draftOnly: true,
@@ -517,8 +523,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
         publicUrlPng: previewInlineDataUrl,
         svgDataUrl: svgInlineDataUrl,
         previewDataUrl: previewInlineDataUrl,
-        gcsUrlSvg: publicUrlSvg && !publicUrlSvg.startsWith('data:') ? publicUrlSvg : null,
-        gcsUrlPng: publicUrlPng && !publicUrlPng.startsWith('data:') ? publicUrlPng : null,
+        gcsUrlSvg: readableGcsSvg,
+        gcsUrlPng: readableGcsPng,
         previewContentType,
         previewExt,
         colors,
@@ -533,12 +539,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     // If we don't persist those, the client will navigate to /home?id=<recordId>
     // but the record won't exist -> /api/svgdata?id=... returns 404.
     if (!canPersist) {
+      const origin = new URL(request.url).origin;
+      const responseSvg = await resolveGcsReadUrl(publicUrlSvg, origin);
+      const responsePng = await resolveGcsReadUrl(publicUrlPng, origin);
       return json({
         message: 'Your image was processed successfully!',
         dbRecord: null,
         recordId: null,
-        publicUrlSvg,
-        publicUrlPng,
+        publicUrlSvg: responseSvg,
+        publicUrlPng: responsePng,
         previewContentType,
         previewExt,
         colors,
@@ -597,13 +606,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
 
     const recordId = insertRes.insertedId.toString();
     logger.log('Image processed successfully', { userId, recordId });
+    const origin = new URL(request.url).origin;
+    const responseSvg = await resolveGcsReadUrl(publicUrlSvg, origin);
+    const responsePng = await resolveGcsReadUrl(publicUrlPng, origin);
 
     return json({
       message: 'Your image was processed successfully!',
       recordId,
-      dbRecord: { _id: insertRes.insertedId, userId, svgData: publicUrlSvg, pngData: publicUrlPng, colors },
-      publicUrlSvg,
-      publicUrlPng,
+      dbRecord: { _id: insertRes.insertedId, userId, svgData: responseSvg, pngData: responsePng, colors },
+      publicUrlSvg: responseSvg,
+      publicUrlPng: responsePng,
       previewContentType,
       previewExt,
       colors,

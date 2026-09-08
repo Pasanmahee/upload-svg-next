@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { getBucketName, getStorage } from '@/lib/gcs';
+import { getBucketName, getStorage, resolveGcsReadUrl } from '@/lib/gcs';
 import { verifyFirebaseAuth } from '@/lib/auth';
 
 export const runtime = 'nodejs';
@@ -156,13 +156,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     }
 
     if (!process.env.MONGODB_URI) {
+      const origin = new URL(request.url).origin;
+      const responseSvg = gcsUrlSvg ? await resolveGcsReadUrl(gcsUrlSvg, origin) : null;
+      const responsePng = gcsUrlPng ? await resolveGcsReadUrl(gcsUrlPng, origin) : null;
       return json({
         message: 'Image processed in the browser. MongoDB is not configured, so the draft was not saved.',
         draftOnly: true,
         draftId: null,
         uploadSvgUrl: null,
-        gcsUrlSvg,
-        gcsUrlPng,
+        gcsUrlSvg: responseSvg,
+        gcsUrlPng: responsePng,
         previewContentType,
         previewExt,
         colors,
@@ -194,6 +197,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
 
     const draftId = draftRes.insertedId.toString();
     logger.log('Browser-generated image draft saved', { userId, draftId, svgBytes: svg.size, previewBytes: preview.size });
+    const origin = new URL(request.url).origin;
+    const responseSvg = gcsUrlSvg ? await resolveGcsReadUrl(gcsUrlSvg, origin) : null;
+    const responsePng = gcsUrlPng ? await resolveGcsReadUrl(gcsUrlPng, origin) : null;
 
     return json({
       message: 'Image processed in the browser and saved as an upload draft.',
@@ -202,8 +208,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
       uploadSvgUrl: `/upload-svg?draftId=${draftId}`,
       dbRecord: null,
       recordId: null,
-      gcsUrlSvg,
-      gcsUrlPng,
+      gcsUrlSvg: responseSvg,
+      gcsUrlPng: responsePng,
       previewContentType,
       previewExt,
       colors,

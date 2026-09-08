@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { getBucketName, getStorage } from '@/lib/gcs';
+import { getBucketName, getStorage, resolveGcsReadUrl } from '@/lib/gcs';
 import { verifyFirebaseAuth } from '@/lib/auth';
 
 export const runtime = 'nodejs';
@@ -78,26 +78,8 @@ function parseGcsObjectRef(value: unknown): GcsRef | null {
   return { bucket: getBucketName(), objectPath };
 }
 
-async function signReadUrl(maybeUrlOrPath: unknown): Promise<unknown> {
-  const ref = parseGcsObjectRef(maybeUrlOrPath);
-  if (!ref) return maybeUrlOrPath;
-
-  try {
-    const storage = getStorage();
-    const [signedUrl] = await storage
-      .bucket(ref.bucket)
-      .file(ref.objectPath)
-      .getSignedUrl({
-        version: 'v4',
-        action: 'read',
-        expires: Date.now() + SIGNED_URL_TTL_MS,
-      });
-
-    return signedUrl;
-  } catch {
-    // If signing fails (e.g., no credentials), fall back to original value.
-    return maybeUrlOrPath;
-  }
+async function signReadUrl(maybeUrlOrPath: unknown, origin: string): Promise<unknown> {
+  return resolveGcsReadUrl(maybeUrlOrPath, origin, SIGNED_URL_TTL_MS);
 }
 
 export async function OPTIONS() {
@@ -206,8 +188,9 @@ export async function POST(request: Request) {
     });
 
     // Return signed read URLs for immediate display.
-    const signedSvg = await signReadUrl(svgData);
-    const signedPng = await signReadUrl(pngData);
+    const origin = new URL(request.url).origin;
+    const signedSvg = await signReadUrl(svgData, origin);
+    const signedPng = await signReadUrl(pngData, origin);
 
     return NextResponse.json(
       {
@@ -268,7 +251,7 @@ export async function GET(request: Request) {
     const signedData = await Promise.all(
       (data || []).map(async (doc: any) => {
         if (!doc?.pngData) return doc;
-        const pngData = await signReadUrl(doc.pngData);
+        const pngData = await signReadUrl(doc.pngData, new URL(request.url).origin);
         return { ...doc, pngData };
       }),
     );

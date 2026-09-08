@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { getBucketName, getStorage } from '@/lib/gcs';
+import { getBucketName, getStorage, resolveGcsReadUrl } from '@/lib/gcs';
 import { isAdminEmail, verifyFirebaseAuth } from '@/lib/auth';
 
 export const runtime = 'nodejs';
@@ -73,24 +73,8 @@ function parseGcsObjectRef(value: unknown): GcsRef | null {
   return { bucket: getBucketName(), objectPath };
 }
 
-async function signReadUrl(maybeUrlOrPath: unknown): Promise<unknown> {
-  const ref = parseGcsObjectRef(maybeUrlOrPath);
-  if (!ref) return maybeUrlOrPath;
-
-  try {
-    const storage = getStorage();
-    const [signedUrl] = await storage
-      .bucket(ref.bucket)
-      .file(ref.objectPath)
-      .getSignedUrl({
-        version: 'v4',
-        action: 'read',
-        expires: Date.now() + SIGNED_URL_TTL_MS,
-      });
-    return signedUrl;
-  } catch {
-    return maybeUrlOrPath;
-  }
+async function signReadUrl(maybeUrlOrPath: unknown, origin: string): Promise<unknown> {
+  return resolveGcsReadUrl(maybeUrlOrPath, origin, SIGNED_URL_TTL_MS);
 }
 
 function toIso(v: any): string | null {
@@ -129,7 +113,8 @@ export async function GET(request: Request) {
   const headers = setCORSHeaders();
 
   try {
-    const { searchParams } = new URL(request.url);
+    const requestUrl = new URL(request.url);
+    const { searchParams } = requestUrl;
     const scope = (searchParams.get('scope') || 'public').toLowerCase();
     const limit = parseLimit(searchParams.get('limit'));
     const after = searchParams.get('after') || '';
@@ -195,7 +180,7 @@ export async function GET(request: Request) {
 
     const data = await Promise.all(
       (pageDocs || []).map(async (d: any) => {
-        const pngData = await signReadUrl(d?.pngData);
+        const pngData = await signReadUrl(d?.pngData, requestUrl.origin);
 
         return {
           ...d,

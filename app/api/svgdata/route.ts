@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { Storage } from '@google-cloud/storage';
+
 import sharp from 'sharp';
 import { getUidIfPresent } from "@/lib/auth";
 import { optimiseRaster } from '@/lib/imageOptimiser';
 import { getGameConfig } from '@/lib/gameConfig';
 import { isValidLevelId } from '@/lib/levelSystem';
 import { buildOutlinePreviewSvg, choosePreviewStrokeColor } from '@/lib/svgPreview';
+import { getBucketName, getStorage, resolveGcsReadUrl } from '@/lib/gcs';
 
 export const runtime = 'nodejs';
 
@@ -25,70 +26,11 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: corsHeaders });
 }
 
-// ---------- GCS helpers (lazy, no module-scope throw) ----------
+// ---------- GCS helpers ----------
 const SIGNED_URL_TTL_MS = 15 * 60 * 1000;
 
-function getBucketName(): string | null {
-  return process.env.GCS_BUCKET || process.env.GCS_BUCKET_NAME || null;
-}
-
-function getServiceAccountJson(): any | null {
-  const b64 = process.env.GCP_SA_KEY_B64 || null;
-  if (!b64) return null;
-  try {
-    const raw = Buffer.from(b64, 'base64').toString('utf8');
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function getStorage(): Storage | null {
-  const creds = getServiceAccountJson();
-  if (!creds) return null;
-  return new Storage({
-    projectId: creds.project_id,
-    credentials: creds,
-  });
-}
-
-function parseGcsObjectRef(value: string) {
-  if (!value || typeof value !== 'string') return null;
-
-  // gs://bucket/path
-  if (value.startsWith('gs://')) {
-    const rest = value.slice('gs://'.length);
-    const firstSlash = rest.indexOf('/');
-    if (firstSlash <= 0) return null;
-    return { bucket: rest.slice(0, firstSlash), objectPath: rest.slice(firstSlash + 1) };
-  }
-
-  // https://storage.googleapis.com/bucket/path
-  const m1 = value.match(/^https?:\/\/storage\.googleapis\.com\/([^/]+)\/(.+)$/i);
-  if (m1) return { bucket: m1[1], objectPath: m1[2] };
-
-  // https://<bucket>.storage.googleapis.com/path
-  const m2 = value.match(/^https?:\/\/([^./]+)\.storage\.googleapis\.com\/(.+)$/i);
-  if (m2) return { bucket: m2[1], objectPath: m2[2] };
-
-  return null;
-}
-
-async function signReadUrl(maybeUrlOrPath: string): Promise<string> {
-  const storage = getStorage();
-  const target = parseGcsObjectRef(maybeUrlOrPath);
-  if (!storage || !target) return maybeUrlOrPath;
-
-  const [signedUrl] = await storage
-    .bucket(target.bucket)
-    .file(target.objectPath)
-    .getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + SIGNED_URL_TTL_MS,
-    });
-
-  return signedUrl;
+async function signReadUrl(maybeUrlOrPath: string, origin: string): Promise<string> {
+  return String(await resolveGcsReadUrl(maybeUrlOrPath, origin, SIGNED_URL_TTL_MS));
 }
 
 function isDataUrl(s: string) {
@@ -204,7 +146,7 @@ export async function GET(req: Request) {
       } else if (svgSource.trim().startsWith('<svg')) {
         rawSvgText = svgSource;
       } else if (svgSource) {
-        const signedSvgUrl = await signReadUrl(svgSource);
+        const signedSvgUrl = await signReadUrl(svgSource, new URL(req.url).origin);
         const r = await fetch(signedSvgUrl);
         if (!r.ok) return json({ message: 'Failed to fetch SVG data' }, 500);
         rawSvgText = await r.text();
@@ -213,7 +155,7 @@ export async function GET(req: Request) {
 
     let pngOut: string = typeof pngSource === 'string' ? pngSource : '';
     if (pngOut && !isDataUrl(pngOut)) {
-      pngOut = await signReadUrl(pngOut);
+      pngOut = await signReadUrl(pngOut, new URL(req.url).origin);
     }
 
     return json(
@@ -451,13 +393,16 @@ export async function POST(req: Request) {
     if (safeLevelId) insertDoc.levelId = safeLevelId;
 
     const insertRes = await svgDataCollection.insertOne(insertDoc);
+    const origin = new URL(req.url).origin;
+    const svgDataResponse = await resolveGcsReadUrl(svgDataStored, origin, SIGNED_URL_TTL_MS);
+    const pngDataResponse = await resolveGcsReadUrl(pngDataStored, origin, SIGNED_URL_TTL_MS);
 
     return json(
       {
         message: 'Data inserted successfully',
         recordId: insertRes.insertedId.toString(),
-        svgData: svgDataStored,
-        pngData: pngDataStored,
+        svgData: svgDataResponse,
+        pngData: pngDataResponse,
         colors: safeColors,
         categories: selectedCategories,
         hasSimplifiedSvg,

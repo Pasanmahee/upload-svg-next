@@ -1,4 +1,5 @@
 import { Storage } from '@google-cloud/storage';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 
 let storageSingleton: Storage | null = null;
 
@@ -114,4 +115,64 @@ export async function signGcsReadUrl(maybeUrlOrPath: string, ttlMs = 15 * 60 * 1
     });
 
   return signedUrl;
+}
+
+
+function getProxySecret(): string | null {
+  return process.env.GCS_PROXY_SECRET || process.env.GCP_SA_KEY_B64 || null;
+}
+
+export function createGcsProxyUrl(
+  maybeUrlOrPath: string,
+  origin: string,
+  ttlMs = 15 * 60 * 1000,
+): string | null {
+  const target = parseGcsObjectRef(maybeUrlOrPath);
+  const secret = getProxySecret();
+  if (!target || !secret || !origin) return null;
+
+  const exp = Math.floor((Date.now() + ttlMs) / 1000);
+  const ref = Buffer.from(JSON.stringify(target), 'utf8').toString('base64url');
+  const sig = createHmac('sha256', secret).update(`${ref}.${exp}`).digest('base64url');
+  return `${origin.replace(/\/$/, '')}/api/gcs-file?ref=${encodeURIComponent(ref)}&exp=${exp}&sig=${encodeURIComponent(sig)}`;
+}
+
+export function verifyGcsProxyToken(ref: string, expRaw: string, sig: string): GcsObjectRef | null {
+  const secret = getProxySecret();
+  const exp = Number.parseInt(expRaw, 10);
+  if (!secret || !ref || !sig || !Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) return null;
+
+  const expected = createHmac('sha256', secret).update(`${ref}.${exp}`).digest('base64url');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(sig);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+
+  try {
+    const parsed = JSON.parse(Buffer.from(ref, 'base64url').toString('utf8')) as GcsObjectRef;
+    if (!parsed?.bucket || !parsed?.objectPath) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveGcsReadUrl(
+  maybeUrlOrPath: unknown,
+  origin: string,
+  ttlMs = 15 * 60 * 1000,
+): Promise<unknown> {
+  if (typeof maybeUrlOrPath !== 'string' || !maybeUrlOrPath) return maybeUrlOrPath;
+  const target = parseGcsObjectRef(maybeUrlOrPath);
+  if (!target) return maybeUrlOrPath;
+
+  try {
+    return await signGcsReadUrl(maybeUrlOrPath, ttlMs);
+  } catch (error) {
+    const proxyUrl = createGcsProxyUrl(maybeUrlOrPath, origin, ttlMs);
+    if (proxyUrl) {
+      console.warn('GCS signed URL generation failed; using authenticated server proxy.', error);
+      return proxyUrl;
+    }
+    throw error;
+  }
 }

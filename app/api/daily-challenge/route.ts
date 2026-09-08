@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { getBucketName, getStorage } from '@/lib/gcs';
+import { getBucketName, getStorage, resolveGcsReadUrl } from '@/lib/gcs';
 import { verifyFirebaseAuth } from '@/lib/auth';
 import { getGameConfig, getManualDailyImageId, publicGameConfig } from '@/lib/gameConfig';
 import { normalizeLevelProgress, type GameLevel } from '@/lib/levelSystem';
@@ -86,24 +86,8 @@ function parseGcsObjectRef(value: unknown): GcsRef | null {
   return objectPath ? { bucket: getBucketName(), objectPath } : null;
 }
 
-async function signReadUrl(maybeUrlOrPath: unknown): Promise<unknown> {
-  const ref = parseGcsObjectRef(maybeUrlOrPath);
-  if (!ref) return maybeUrlOrPath;
-
-  try {
-    const storage = getStorage();
-    const [signedUrl] = await storage
-      .bucket(ref.bucket)
-      .file(ref.objectPath)
-      .getSignedUrl({
-        version: 'v4',
-        action: 'read',
-        expires: Date.now() + SIGNED_URL_TTL_MS,
-      });
-    return signedUrl;
-  } catch {
-    return maybeUrlOrPath;
-  }
+async function signReadUrl(maybeUrlOrPath: unknown, origin: string): Promise<unknown> {
+  return resolveGcsReadUrl(maybeUrlOrPath, origin, SIGNED_URL_TTL_MS);
 }
 
 function toIso(v: any): string | null {
@@ -132,11 +116,11 @@ function imageProjection() {
   };
 }
 
-async function serializeDailyImage(doc: any) {
+async function serializeDailyImage(doc: any, origin: string) {
   if (!doc) return null;
   return {
     _id: doc._id?.toString?.() ?? String(doc._id ?? ''),
-    pngData: await signReadUrl(doc.pngData),
+    pngData: await signReadUrl(doc.pngData, origin),
     colors: Array.isArray(doc.colors) ? doc.colors : [],
     categories: Array.isArray(doc.categories) ? doc.categories : [],
     levelId: typeof doc.levelId === 'string' ? doc.levelId : null,
@@ -150,13 +134,14 @@ async function getDailyImage(
   challengeDate: string,
   levelId: string,
   manualImageId?: string | null,
+  origin = '',
 ) {
   const collection = db.collection('svgdata');
   const baseQuery = { userId: { $exists: false }, levelId };
 
   if (manualImageId && ObjectId.isValid(manualImageId)) {
     const doc = await collection.findOne({ ...baseQuery, _id: new ObjectId(manualImageId) }, { projection: imageProjection() });
-    if (doc) return serializeDailyImage(doc);
+    if (doc) return serializeDailyImage(doc, origin);
   }
 
   const total = await collection.countDocuments(baseQuery);
@@ -170,7 +155,7 @@ async function getDailyImage(
     .limit(1)
     .toArray();
 
-  return serializeDailyImage(doc);
+  return serializeDailyImage(doc, origin);
 }
 
 function resolveDailyLevelId(requestedLevelId: string, progress: any, levels: GameLevel[]): string {
@@ -229,7 +214,7 @@ export async function GET(request: Request) {
     const progress = normalizeLevelProgress(userDoc?.levelProgress, config.levels);
     const levelId = resolveDailyLevelId(requestedLevelId, progress, config.levels);
     const manualImageId = getManualDailyImageId(config, challengeDate);
-    const image = await getDailyImage(db, challengeDate, levelId, manualImageId);
+    const image = await getDailyImage(db, challengeDate, levelId, manualImageId, new URL(request.url).origin);
     const rewardCoins = config.dailyReward.rewardCoins;
     const streakRewardDays = config.dailyReward.streakRewardDays;
     const specialPack = {
@@ -329,7 +314,7 @@ export async function POST(request: Request) {
     const progress = normalizeLevelProgress(userDoc?.levelProgress, config.levels);
     const levelId = resolveDailyLevelId(requestedLevelId, progress, config.levels);
     const manualImageId = getManualDailyImageId(config, challengeDate);
-    const expectedImage = await getDailyImage(db, challengeDate, levelId, manualImageId);
+    const expectedImage = await getDailyImage(db, challengeDate, levelId, manualImageId, new URL(request.url).origin);
     const rewardCoins = config.dailyReward.rewardCoins;
     const streakRewardDays = config.dailyReward.streakRewardDays;
     const specialPack = {

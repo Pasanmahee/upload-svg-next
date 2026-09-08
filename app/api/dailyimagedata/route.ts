@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { signGcsReadUrl } from '@/lib/gcs';
+import { resolveGcsReadUrl } from '@/lib/gcs';
 import { getGameConfig, publicGameConfig } from '@/lib/gameConfig';
 import { inferImageLevelId } from '@/lib/levelSystem';
 
@@ -133,9 +133,10 @@ export async function GET(request: Request) {
       let pngData = doc.pngData;
       if (typeof pngData === 'string') {
         try {
-          pngData = await signGcsReadUrl(pngData);
-        } catch {
-          // If signing fails for any reason, fall back to original value
+          pngData = await resolveGcsReadUrl(pngData, new URL(request.url).origin);
+        } catch (error) {
+          console.error('Failed to create a readable GCS asset URL:', error);
+          pngData = null;
         }
       }
 

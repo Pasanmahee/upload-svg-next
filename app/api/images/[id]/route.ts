@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import sharp from 'sharp';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { getBucketName, getStorage } from '@/lib/gcs';
+import { getBucketName, getStorage, resolveGcsReadUrl } from '@/lib/gcs';
 import { type AuthResult, isAdminEmail, verifyFirebaseAuth } from '@/lib/auth';
 import { optimiseRaster } from '@/lib/imageOptimiser';
 import { getGameConfig } from '@/lib/gameConfig';
@@ -79,24 +79,8 @@ function parseGcsObjectRef(value: unknown): GcsRef | null {
   return { bucket: getBucketName(), objectPath };
 }
 
-async function signReadUrl(maybeUrlOrPath: unknown): Promise<unknown> {
-  const ref = parseGcsObjectRef(maybeUrlOrPath);
-  if (!ref) return maybeUrlOrPath;
-
-  try {
-    const storage = getStorage();
-    const [signedUrl] = await storage
-      .bucket(ref.bucket)
-      .file(ref.objectPath)
-      .getSignedUrl({
-        version: 'v4',
-        action: 'read',
-        expires: Date.now() + SIGNED_URL_TTL_MS,
-      });
-    return signedUrl;
-  } catch {
-    return maybeUrlOrPath;
-  }
+async function signReadUrl(maybeUrlOrPath: unknown, origin: string): Promise<unknown> {
+  return resolveGcsReadUrl(maybeUrlOrPath, origin, SIGNED_URL_TTL_MS);
 }
 
 type StoredAssetDeleteResult =
@@ -277,8 +261,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
       if (uid !== doc.userId && !isAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers });
     }
 
-    const pngData = await signReadUrl((doc as any).pngData);
-    const svgData = await signReadUrl((doc as any).svgData);
+    const origin = new URL(request.url).origin;
+    const pngData = await signReadUrl((doc as any).pngData, origin);
+    const svgData = await signReadUrl((doc as any).svgData, origin);
 
     return NextResponse.json(
       {
@@ -568,8 +553,9 @@ export async function PUT(request: Request, ctx: { params: Promise<{ id: string 
 
     const updated = await collection.findOne({ _id: new ObjectId(id) });
 
-    const pngSigned = await signReadUrl((updated as any)?.pngData);
-    const svgSigned = await signReadUrl((updated as any)?.svgData);
+    const origin = new URL(request.url).origin;
+    const pngSigned = await signReadUrl((updated as any)?.pngData, origin);
+    const svgSigned = await signReadUrl((updated as any)?.svgData, origin);
 
     return NextResponse.json(
       {

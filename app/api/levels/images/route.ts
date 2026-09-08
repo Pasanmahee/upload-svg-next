@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { getBucketName, getStorage } from '@/lib/gcs';
+import { getBucketName, getStorage, resolveGcsReadUrl } from '@/lib/gcs';
 import { getLevelById, inferImageLevelId } from '@/lib/levelSystem';
 import { getGameConfig, publicGameConfig } from '@/lib/gameConfig';
 
@@ -53,20 +53,8 @@ function parseGcsObjectRef(value: unknown): GcsRef | null {
   return objectPath ? { bucket: getBucketName(), objectPath } : null;
 }
 
-async function signReadUrl(maybeUrlOrPath: unknown): Promise<unknown> {
-  const ref = parseGcsObjectRef(maybeUrlOrPath);
-  if (!ref) return maybeUrlOrPath;
-  try {
-    const storage = getStorage();
-    const [signedUrl] = await storage.bucket(ref.bucket).file(ref.objectPath).getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + SIGNED_URL_TTL_MS,
-    });
-    return signedUrl;
-  } catch {
-    return maybeUrlOrPath;
-  }
+async function signReadUrl(maybeUrlOrPath: unknown, origin: string): Promise<unknown> {
+  return resolveGcsReadUrl(maybeUrlOrPath, origin, SIGNED_URL_TTL_MS);
 }
 
 function toIso(v: any): string | null {
@@ -115,7 +103,8 @@ function matchesCategory(doc: any, categoryId: string | null): boolean {
 
 export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
+    const requestUrl = new URL(request.url);
+    const { searchParams } = requestUrl;
     const pageRaw = Number.parseInt(searchParams.get('page') || '1', 10);
     const limitRaw = Number.parseInt(searchParams.get('limit') || '12', 10);
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
@@ -170,7 +159,7 @@ export async function GET(request: Request) {
       const doc = item.doc;
       return {
         _id: doc._id?.toString?.() ?? String(doc._id ?? ''),
-        pngData: await signReadUrl(doc.pngData),
+        pngData: await signReadUrl(doc.pngData, requestUrl.origin),
         categories: Array.isArray(doc.categories) ? doc.categories.map((x: any) => String(x?._id ?? x ?? '')) : [],
         colors: Array.isArray(doc.colors) ? doc.colors : [],
         levelId: item.levelId,

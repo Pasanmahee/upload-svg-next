@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { getMongoClient, getDbName } from '@/lib/mongo';
-import { signGcsReadUrl } from '@/lib/gcs';
+import { resolveGcsReadUrl } from '@/lib/gcs';
 import { getUidIfPresent } from "@/lib/auth";
 
 export const runtime = 'nodejs';
@@ -63,7 +63,8 @@ export async function GET(req: Request) {
   const headers = setCORSHeaders();
 
   try {
-    const { searchParams } = new URL(req.url);
+    const requestUrl = new URL(req.url);
+    const { searchParams } = requestUrl;
 
     // Optional user context (used to scope private "Create" images)
     const uid = await getUidIfPresent(req);
@@ -194,12 +195,8 @@ export async function GET(req: Request) {
     const signedData = await Promise.all(
       data.map(async (doc: any) => {
         if (!doc?.pngData || typeof doc.pngData !== 'string') return doc;
-        try {
-          const pngData = await signGcsReadUrl(doc.pngData);
-          return { ...doc, pngData };
-        } catch {
-          return doc;
-        }
+        const pngData = await resolveGcsReadUrl(doc.pngData, requestUrl.origin);
+        return { ...doc, pngData };
       })
     );
 
