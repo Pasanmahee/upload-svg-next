@@ -1,41 +1,154 @@
 import { Storage } from '@google-cloud/storage';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 
 let storageSingleton: Storage | null = null;
 
 export type GcsObjectRef = { bucket: string; objectPath: string };
 
-function getServiceAccountFromEnv(): any | null {
-  const b64 = process.env.GCP_SA_KEY_B64;
-  if (!b64) return null;
+type ServiceAccountLike = {
+  project_id?: string;
+  projectId?: string;
+  client_email?: string;
+  clientEmail?: string;
+  private_key?: string;
+  privateKey?: string;
+};
+
+type NormalizedServiceAccount = {
+  projectId?: string;
+  clientEmail: string;
+  privateKey: string;
+};
+
+function normalizePrivateKey(value: unknown): string {
+  return typeof value === 'string' ? value.replace(/\\n/g, '\n') : '';
+}
+
+function normalizeServiceAccount(value: unknown): NormalizedServiceAccount | null {
+  if (!value || typeof value !== 'object') return null;
+  const sa = value as ServiceAccountLike;
+  const clientEmail = sa.client_email || sa.clientEmail || '';
+  const privateKey = normalizePrivateKey(sa.private_key || sa.privateKey);
+  const projectId = sa.project_id || sa.projectId || undefined;
+
+  if (!clientEmail || !privateKey) return null;
+  return { projectId, clientEmail, privateKey };
+}
+
+function parseJsonServiceAccount(raw: string | undefined): NormalizedServiceAccount | null {
+  if (!raw?.trim()) return null;
   try {
-    const jsonStr = Buffer.from(b64, 'base64').toString('utf8');
-    return JSON.parse(jsonStr);
+    return normalizeServiceAccount(JSON.parse(raw));
   } catch {
     return null;
   }
 }
 
+function parseBase64ServiceAccount(raw: string | undefined): NormalizedServiceAccount | null {
+  if (!raw?.trim()) return null;
+  try {
+    const decoded = Buffer.from(raw, 'base64').toString('utf8');
+    return normalizeServiceAccount(JSON.parse(decoded));
+  } catch {
+    return null;
+  }
+}
+
+function readServiceAccountFile(path: string | undefined): NormalizedServiceAccount | null {
+  if (!path?.trim()) return null;
+  try {
+    if (!existsSync(path) || !statSync(path).isFile()) return null;
+    return parseJsonServiceAccount(readFileSync(path, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a Google service account without depending on a filesystem path.
+ *
+ * Preferred GCS vars are checked first. Firebase Admin service-account vars are
+ * accepted as a fallback because many deployments already provide the same
+ * Google service account there. GOOGLE_APPLICATION_CREDENTIALS is used only if
+ * the referenced file actually exists.
+ */
+function getServiceAccountFromEnv(): NormalizedServiceAccount | null {
+  const jsonCandidates = [
+    process.env.GCP_SA_KEY_JSON,
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
+    process.env.FIREBASE_ADMIN_SA_JSON,
+  ];
+  for (const candidate of jsonCandidates) {
+    const parsed = parseJsonServiceAccount(candidate);
+    if (parsed) return parsed;
+  }
+
+  const b64Candidates = [
+    process.env.GCP_SA_KEY_B64,
+    process.env.GOOGLE_SERVICE_ACCOUNT_B64,
+    process.env.FIREBASE_SERVICE_ACCOUNT_B64,
+    process.env.FIREBASE_ADMIN_SA_B64,
+  ];
+  for (const candidate of b64Candidates) {
+    const parsed = parseBase64ServiceAccount(candidate);
+    if (parsed) return parsed;
+  }
+
+  const direct = normalizeServiceAccount({
+    project_id: process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT,
+    client_email: process.env.GCP_CLIENT_EMAIL,
+    private_key: process.env.GCP_PRIVATE_KEY,
+  });
+  if (direct) return direct;
+
+  return readServiceAccountFile(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+}
+
+function clearBrokenGoogleCredentialsPath(): void {
+  const credentialPath = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
+  if (!credentialPath) return;
+
+  try {
+    if (existsSync(credentialPath) && statSync(credentialPath).isFile()) return;
+  } catch {
+    // Treat unreadable/broken paths the same as missing paths.
+  }
+
+  console.warn(
+    `[GCS] Ignoring GOOGLE_APPLICATION_CREDENTIALS because the file does not exist: ${credentialPath}. ` +
+      'For Vercel/Docker, prefer GCP_SA_KEY_B64 or GCP_SA_KEY_JSON.',
+  );
+
+  // google-auth-library reads this variable lazily. Leaving a broken path in
+  // process.env causes every signed URL/download attempt to fail with ENOENT.
+  delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+}
+
 export function getStorage(): Storage {
   if (storageSingleton) return storageSingleton;
 
-  // Preferred order:
-  // 1) GCP_SA_KEY_B64 with base64 encoded service-account JSON
-  // 2) GOOGLE_APPLICATION_CREDENTIALS pointing to a mounted JSON file
-  // 3) Application Default Credentials from the runtime environment
   const sa = getServiceAccountFromEnv();
-  if (sa?.client_email && sa?.private_key) {
+  if (sa) {
     storageSingleton = new Storage({
-      projectId: sa.project_id,
+      projectId: sa.projectId || process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT,
       credentials: {
-        client_email: sa.client_email,
-        private_key: sa.private_key,
+        client_email: sa.clientEmail,
+        private_key: sa.privateKey,
       },
     });
-  } else {
-    storageSingleton = new Storage();
+    return storageSingleton;
   }
 
+  clearBrokenGoogleCredentialsPath();
+
+  // Last fallback: Application Default Credentials. This works on Google Cloud
+  // runtimes or developer machines configured with ADC. On Vercel, provide a
+  // service account via one of the env vars handled above.
+  storageSingleton = new Storage({
+    projectId: process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT,
+  });
   return storageSingleton;
 }
 
@@ -117,9 +230,15 @@ export async function signGcsReadUrl(maybeUrlOrPath: string, ttlMs = 15 * 60 * 1
   return signedUrl;
 }
 
-
 function getProxySecret(): string | null {
-  return process.env.GCS_PROXY_SECRET || process.env.GCP_SA_KEY_B64 || null;
+  return (
+    process.env.GCS_PROXY_SECRET ||
+    process.env.ADMIN_SESSION_SECRET ||
+    process.env.GCP_SA_KEY_B64 ||
+    process.env.FIREBASE_SERVICE_ACCOUNT_B64 ||
+    process.env.FIREBASE_ADMIN_SA_B64 ||
+    null
+  );
 }
 
 export function createGcsProxyUrl(

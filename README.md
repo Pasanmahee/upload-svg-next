@@ -46,9 +46,17 @@ Copy `.env.example` to `.env.local` and fill:
 - `DB_NAME` (optional)
 - `GCS_BUCKET_NAME` (recommended; back-compat: `GCS_BUCKET`)
 - Credentials (choose ONE):
-  - `GOOGLE_APPLICATION_CREDENTIALS` (path to service-account JSON)
-  - `GCP_SA_KEY_B64` (base64-encoded service-account JSON)
+  - `GCP_SA_KEY_B64` (**recommended for Vercel/Docker**; base64-encoded service-account JSON)
+  - `GCP_SA_KEY_JSON` (complete service-account JSON in one env value)
+  - `GOOGLE_APPLICATION_CREDENTIALS` (only when that JSON file really exists inside the running host/container)
+  - Existing `FIREBASE_SERVICE_ACCOUNT_B64` / `FIREBASE_SERVICE_ACCOUNT_JSON` can also be reused if that service account has access to the GCS bucket.
 - `DISABLE_GCS=1` to return inline `data:` URLs instead of uploading files
+
+### Important: `/app/keys/service-account.json` ENOENT
+
+If a deployment logs `The file at /app/keys/service-account.json does not exist`, the runtime has a stale `GOOGLE_APPLICATION_CREDENTIALS` value but no mounted file at that path. The app now ignores a missing credential-file path instead of repeatedly throwing `ENOENT`, and it will use `GCP_SA_KEY_B64`, `GCP_SA_KEY_JSON`, Firebase Admin service-account env vars, or ADC instead.
+
+For Vercel, remove the stale `GOOGLE_APPLICATION_CREDENTIALS=/app/keys/service-account.json` variable and add `GCP_SA_KEY_B64`. Redeploy after changing environment variables.
 
 ## Run locally
 

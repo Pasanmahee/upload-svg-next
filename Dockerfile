@@ -17,8 +17,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# If using Google Cloud Storage, mount/service-account JSON and set GOOGLE_APPLICATION_CREDENTIALS accordingly.
-# Example: -e GOOGLE_APPLICATION_CREDENTIALS=/app/keys/service-account.json
+# For Google Cloud Storage, prefer GCP_SA_KEY_B64/GCP_SA_KEY_JSON at runtime.
+# A GOOGLE_APPLICATION_CREDENTIALS path is also supported, but only when that JSON file
+# is actually mounted into the running container. Do not bake service-account keys into the image.
 
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public

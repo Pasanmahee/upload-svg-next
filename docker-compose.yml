@@ -8,5 +8,16 @@ services:
       MONGODB_URI: ${MONGODB_URI}
       DB_NAME: ${DB_NAME:-svgfacetpaintbynumber}
       GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-svg-image-processing-bucket}
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
+      # Prefer an env credential in containers; no key file needs to be copied into the image.
+      GCP_SA_KEY_B64: ${GCP_SA_KEY_B64:-}
+      GCP_SA_KEY_JSON: ${GCP_SA_KEY_JSON:-}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCP_CLIENT_EMAIL: ${GCP_CLIENT_EMAIL:-}
+      GCP_PRIVATE_KEY: ${GCP_PRIVATE_KEY:-}
+      # Keep file-based ADC optional. lib/gcs.ts ignores this value when the path is missing.
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      GCS_PROXY_SECRET: ${GCS_PROXY_SECRET:-}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
+      FIREBASE_SERVICE_ACCOUNT_B64: ${FIREBASE_SERVICE_ACCOUNT_B64:-}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
       MAX_RECORDS_PER_USER: ${MAX_RECORDS_PER_USER:-3}
